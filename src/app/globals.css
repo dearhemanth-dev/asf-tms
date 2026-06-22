@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  --background: #060f1f;
+  --background-soft: #10203b;
+  --foreground: #e7edf6;
+  --muted: #8ea1bd;
+  --accent: #20d4d9;
+  --accent-2: #63f3b4;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-background-soft: var(--background-soft);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background:
+    radial-gradient(900px 500px at 15% -5%, #124f7a66 0%, transparent 70%),
+    radial-gradient(800px 500px at 90% 0%, #1f7f6966 0%, transparent 65%),
+    linear-gradient(180deg, #040a14 0%, #060f1f 55%, #071528 100%);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), "Segoe UI", sans-serif;
+}
+
+.glass {
+  backdrop-filter: blur(16px);
+  background: linear-gradient(160deg, #0a1a31d9 0%, #10203bbd 100%);
+  border: 1px solid #284667;
+}
+
+.desktop-scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.desktop-scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
