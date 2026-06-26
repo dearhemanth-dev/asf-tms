@@ -87,6 +87,8 @@ export default function FleetMap({
       (vehicle) => typeof vehicle.longitude === "number" && typeof vehicle.latitude === "number"
     );
 
+    vehiclesByIdRef.current = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+
     return {
       type: "FeatureCollection",
       features: mappedVehicles.map((vehicle) => {
@@ -114,10 +116,6 @@ export default function FleetMap({
       }),
     };
   }, [selectedId, vehicles]);
-
-  useEffect(() => {
-    vehiclesByIdRef.current = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
-  }, [vehicles]);
 
   const updateOverlayPosition = useCallback(() => {
     const map = mapRef.current;
@@ -249,8 +247,6 @@ export default function FleetMap({
       vehicleFeatures.features.forEach((feature) => {
         if (!feature.properties.showLabel) return;
 
-        const isCompactViewport = typeof window !== "undefined" && window.innerWidth < 768;
-
         const labelHost = document.createElement("button");
         labelHost.type = "button";
         labelHost.title = feature.properties.truckNo;
@@ -258,7 +254,7 @@ export default function FleetMap({
         labelHost.style.flexDirection = "column";
         labelHost.style.alignItems = "center";
         labelHost.style.justifyContent = "flex-end";
-        labelHost.style.padding = isCompactViewport ? "0 0 7px 0" : "0 0 10px 0";
+        labelHost.style.padding = "0 0 12px 0";
         labelHost.style.margin = "0";
         labelHost.style.background = "transparent";
         labelHost.style.border = "none";
@@ -270,17 +266,12 @@ export default function FleetMap({
         pill.style.display = "inline-flex";
         pill.style.alignItems = "center";
         pill.style.justifyContent = "center";
-        if (isCompactViewport) {
-          pill.style.padding = feature.properties.selected ? "3px 8px" : "2px 7px";
-          pill.style.fontSize = feature.properties.selected ? "11px" : "10px";
-        } else {
-          pill.style.padding = feature.properties.selected ? "4px 9px" : "3px 8px";
-          pill.style.fontSize = feature.properties.selected ? "12px" : "11px";
-        }
+        pill.style.padding = feature.properties.selected ? "4px 9px" : "3px 8px";
         pill.style.borderRadius = "999px";
         pill.style.border = feature.properties.selected ? "1px solid #ffffff" : "1px solid #ffffff";
         pill.style.background = "#020617";
         pill.style.color = "#ffffff";
+        pill.style.fontSize = feature.properties.selected ? "12px" : "11px";
         pill.style.fontWeight = feature.properties.selected ? "800" : "700";
         pill.style.letterSpacing = "0.01em";
         pill.style.lineHeight = "1.1";

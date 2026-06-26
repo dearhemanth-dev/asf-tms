@@ -196,7 +196,7 @@ export default function FuelReportPage() {
 
       setExpandedTypeByUnit((prev) => ({
         ...prev,
-        [cacheKey]: (payload.byType ?? [])[0]?.type ?? null,
+        [cacheKey]: null,
       }));
     } catch {
       setDrilldownError("Network error while loading unit transactions.");
@@ -343,9 +343,6 @@ export default function FuelReportPage() {
               const drilldownData = drilldownCache[cacheKey];
               const typeRows = drilldownData?.byType ?? [];
               const expandedType = expandedTypeByUnit[cacheKey] ?? null;
-              const selectedTypeTransactions = expandedType
-                ? drilldownData?.transactionsByType[expandedType] ?? []
-                : [];
               return (
                 <article
                   key={`${row.unit_number}-${index}`}
@@ -383,88 +380,94 @@ export default function FuelReportPage() {
 
                       {typeRows.length > 0 && (
                         <>
-                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          <div className="space-y-2">
                             {typeRows.map((typeRow) => {
                               const isTypeExpanded = expandedType === typeRow.type;
+                              const typeTransactions = drilldownData?.transactionsByType[typeRow.type] ?? [];
                               return (
-                                <button
-                                  key={typeRow.type}
-                                  type="button"
-                                  onClick={() => toggleType(cacheKey, typeRow.type)}
-                                  className="rounded-xl border border-white/10 bg-slate-900/70 p-3 text-left transition hover:bg-slate-900"
-                                >
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                      <p className="text-xs font-semibold text-cyan-200">{typeRow.type}</p>
-                                      <p className="text-[11px] text-slate-300">{typeRow.transaction_count} transactions</p>
+                                <div key={typeRow.type} className="space-y-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleType(cacheKey, typeRow.type)}
+                                    className={`w-full rounded-xl border p-3 text-left transition ${
+                                      isTypeExpanded
+                                        ? "border-cyan-300/30 bg-slate-900"
+                                        : "border-white/10 bg-slate-900/70 hover:bg-slate-900"
+                                    }`}
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <p className="text-xs font-semibold text-cyan-200">{typeRow.type}</p>
+                                        <p className="text-[11px] text-slate-300">{typeRow.transaction_count} transactions</p>
+                                      </div>
+                                      <p className="text-sm font-semibold text-emerald-200">{currency(typeRow.total)}</p>
                                     </div>
-                                    <p className="text-sm font-semibold text-emerald-200">{currency(typeRow.total)}</p>
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                      {isTypeExpanded ? "Hide transactions" : "View transactions"}
+                                    </p>
+                                  </button>
+
+                                  {isTypeExpanded && (
+                                    <div className="rounded-xl border border-cyan-500/20 bg-slate-900/35 p-3 ring-1 ring-cyan-500/10">
+                                      <div className="mb-3 flex items-center justify-between gap-2">
+                                        <p className="text-sm font-semibold text-cyan-100">{typeRow.type} Transactions</p>
+                                        <p className="text-xs text-slate-400">{typeTransactions.length} rows</p>
+                                      </div>
+
+                                      <div className="space-y-2 md:hidden">
+                                        {typeTransactions.map((tx) => (
+                                          <div key={tx.id} className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
+                                            <div className="flex items-start justify-between gap-2">
+                                              <div>
+                                                <p className="text-xs font-semibold text-cyan-200">{tx.type}</p>
+                                                <p className="text-[11px] text-slate-300">Txn #{tx.transaction_number}</p>
+                                              </div>
+                                              <p className="text-sm font-semibold text-emerald-200">{currency(tx.total)}</p>
+                                            </div>
+                                            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+                                              <p>Date/Time: {formatDateTime(tx.transaction_date, tx.transaction_time)}</p>
+                                              <p>Driver: {tx.driver_name ?? "-"}</p>
+                                              <p>Price/gal: {tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}</p>
+                                              <p>Gallons: {numberText(tx.gallons, 4)}</p>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+
+                                      <div className="hidden overflow-x-auto md:block">
+                                        <table className="min-w-full border-collapse">
+                                          <thead>
+                                            <tr>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Date/Time</th>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Type</th>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Txn #</th>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Driver</th>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Price/gal</th>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Gallons</th>
+                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Total</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {typeTransactions.map((tx) => (
+                                              <tr key={tx.id} className="hover:bg-white/3">
+                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{formatDateTime(tx.transaction_date, tx.transaction_time)}</td>
+                                                <td className="border border-white/10 px-3 py-2 text-xs font-medium text-cyan-200">{tx.type}</td>
+                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.transaction_number}</td>
+                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.driver_name ?? "-"}</td>
+                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}</td>
+                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{numberText(tx.gallons, 4)}</td>
+                                                <td className="border border-white/10 px-3 py-2 text-xs font-semibold text-emerald-200">{currency(tx.total)}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </div>
+                                  )}
                                   </div>
-                                  <p className="mt-1 text-[11px] text-slate-400">
-                                    {isTypeExpanded ? "Hide transactions" : "View transactions"}
-                                  </p>
-                                </button>
                               );
                             })}
                           </div>
-
-                          {expandedType && (
-                            <div className="mt-3 rounded-xl border border-white/10 bg-slate-900/40 p-3">
-                              <div className="mb-3 flex items-center justify-between gap-2">
-                                <p className="text-sm font-semibold text-cyan-100">{expandedType} Transactions</p>
-                                <p className="text-xs text-slate-400">{selectedTypeTransactions.length} rows</p>
-                              </div>
-
-                              <div className="space-y-2 md:hidden">
-                                {selectedTypeTransactions.map((tx) => (
-                                  <div key={tx.id} className="rounded-xl border border-white/10 bg-slate-900/70 p-3">
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div>
-                                        <p className="text-xs font-semibold text-cyan-200">{tx.type}</p>
-                                        <p className="text-[11px] text-slate-300">Txn #{tx.transaction_number}</p>
-                                      </div>
-                                      <p className="text-sm font-semibold text-emerald-200">{currency(tx.total)}</p>
-                                    </div>
-                                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-                                      <p>Date/Time: {formatDateTime(tx.transaction_date, tx.transaction_time)}</p>
-                                      <p>Driver: {tx.driver_name ?? "-"}</p>
-                                      <p>Price/gal: {tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}</p>
-                                      <p>Gallons: {numberText(tx.gallons, 4)}</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-
-                              <div className="hidden overflow-x-auto md:block">
-                                <table className="min-w-full border-collapse">
-                                  <thead>
-                                    <tr>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Date/Time</th>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Type</th>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Txn #</th>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Driver</th>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Price/gal</th>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Gallons</th>
-                                      <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Total</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {selectedTypeTransactions.map((tx) => (
-                                      <tr key={tx.id} className="hover:bg-white/3">
-                                        <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{formatDateTime(tx.transaction_date, tx.transaction_time)}</td>
-                                        <td className="border border-white/10 px-3 py-2 text-xs font-medium text-cyan-200">{tx.type}</td>
-                                        <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.transaction_number}</td>
-                                        <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.driver_name ?? "-"}</td>
-                                        <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}</td>
-                                        <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{numberText(tx.gallons, 4)}</td>
-                                        <td className="border border-white/10 px-3 py-2 text-xs font-semibold text-emerald-200">{currency(tx.total)}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          )}
                         </>
                       )}
                     </div>

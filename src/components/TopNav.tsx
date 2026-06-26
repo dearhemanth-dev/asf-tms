@@ -46,9 +46,7 @@ export default function TopNav({
 
     if (role === "maintenance") {
       return [
-        { href: "/fleet", label: "Fleet" },
         { href: "/maintenance/fault-codes", label: "Fault Codes" },
-        { href: "/reports/repairs", label: "Repairs Report" },
       ];
     }
 

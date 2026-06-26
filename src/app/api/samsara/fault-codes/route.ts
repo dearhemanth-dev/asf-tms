@@ -4,11 +4,54 @@ import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 const SAMSARA_STATS_URL = "https://api.samsara.com/fleet/vehicles/stats";
 
+const REQUESTED_STATS_TYPES = [
+  "faultCodes",
+  "engineCoolantTemperatureMilliC",
+  "engineOilPressureKPa",
+  "engineLoadPercent",
+  "obdEngineSeconds",
+  "gps",
+  "fuelPercent",
+  "obdOdometerMeters",
+  "engineRpm",
+  "batteryMilliVolts",
+  "fuelConsumedMilliliters",
+  "idlingDurationMilliseconds",
+  "defLevelMilliPercent",
+  "engineState",
+  "barometricPressurePa",
+  "ecuSpeedMph",
+] as const;
+
+// Samsara stats endpoint type names (includes engineStates/fuelPercents aliases).
+const STATS_SNAPSHOT_TYPES = [
+  "faultCodes",
+  "engineCoolantTemperatureMilliC",
+  "engineOilPressureKPa",
+  "engineLoadPercent",
+  "obdEngineSeconds",
+  "gps",
+  "fuelPercents",
+  "obdOdometerMeters",
+  "defLevelMilliPercent",
+  "engineStates",
+  "barometricPressurePa",
+  "batteryMilliVolts",
+  "fuelConsumedMilliliters",
+  "idlingDurationMilliseconds",
+  "engineRpm",
+  "ecuSpeedMph",
+] as const;
+
+const MAX_TYPES_PER_REQUEST = 4;
+const SAMSARA_REQUEST_TIMEOUT_MS = 15_000;
+
 type FaultCodeEntry = {
   sourceKeyIndex: number;
   vehicleId: string;
   vehicleName?: string;
   faultCodes: unknown;
+  stats: Record<string, unknown>;
   rawVehicle: Record<string, unknown>;
 };
 
@@ -16,13 +59,27 @@ type TokenFetchSuccess = {
   sourceKeyIndex: number;
   pagesFetched: number;
   rawPages: Record<string, unknown>[];
+  requestedBatches: string[][];
   faults: FaultCodeEntry[];
+  failures: TokenFetchFailure[];
 };
 
 type TokenFetchFailure = {
   sourceKeyIndex: number;
   status?: number;
+  requestedTypes?: string[];
   message: string;
+};
+
+type ChunkFetchResult = {
+  rows: Record<string, unknown>[];
+  rawPages: Record<string, unknown>[];
+};
+
+type ApiResult = {
+  ok: boolean;
+  status: number;
+  payload: Record<string, unknown>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -60,18 +117,6 @@ function extractRows(page: Record<string, unknown>): Record<string, unknown>[] {
     .filter((row): row is Record<string, unknown> => row !== null);
 }
 
-function extractAfterCursor(page: Record<string, unknown>): string | null {
-  const pagination = asRecord(page.pagination);
-  if (!pagination) return null;
-
-  const endCursor = pagination.endCursor;
-  if (typeof endCursor === "string" && endCursor.trim().length > 0) {
-    return endCursor;
-  }
-
-  return null;
-}
-
 function extractFaultCodes(row: Record<string, unknown>): unknown {
   if (row.faultCodes !== undefined) return row.faultCodes;
 
@@ -81,7 +126,34 @@ function extractFaultCodes(row: Record<string, unknown>): unknown {
   return undefined;
 }
 
-function toFaultEntry(sourceKeyIndex: number, row: Record<string, unknown>): FaultCodeEntry {
+function chunkTypes(types: readonly string[], chunkSize: number): string[][] {
+  const uniqueTypes = Array.from(new Set(types));
+  const safeChunkSize = Math.max(1, Math.min(chunkSize, 4));
+  const chunks: string[][] = [];
+  for (let index = 0; index < uniqueTypes.length; index += safeChunkSize) {
+    chunks.push(uniqueTypes.slice(index, index + safeChunkSize));
+  }
+  return chunks;
+}
+
+function extractStats(row: Record<string, unknown>): Record<string, unknown> {
+  const fromStats = asRecord(row.stats);
+  const stats: Record<string, unknown> = fromStats ? { ...fromStats } : {};
+
+  // Normalize Samsara alias fields into canonical keys used by UI.
+  if (row.engineState !== undefined) stats.engineState = row.engineState;
+  if (row.fuelPercent !== undefined) stats.fuelPercent = row.fuelPercent;
+
+  for (const type of REQUESTED_STATS_TYPES) {
+    if (row[type] !== undefined) {
+      stats[type] = row[type];
+    }
+  }
+
+  return stats;
+}
+
+function getVehicleIdentity(row: Record<string, unknown>): { vehicleId: string; vehicleName?: string } {
   const vehicle = asRecord(row.vehicle);
 
   const vehicleId =
@@ -99,76 +171,165 @@ function toFaultEntry(sourceKeyIndex: number, row: Record<string, unknown>): Fau
         ? vehicle.name
         : undefined;
 
+  return { vehicleId, vehicleName };
+}
+
+function toFaultEntry(sourceKeyIndex: number, row: Record<string, unknown>): FaultCodeEntry {
+  const { vehicleId, vehicleName } = getVehicleIdentity(row);
+  const stats = extractStats(row);
+
+  // Strip stat-type keys from the top-level spread so they only live inside stats (no duplication)
+  const statTypeSet = new Set<string>(REQUESTED_STATS_TYPES);
+  const rawVehicleBase: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (!statTypeSet.has(key) && key !== "stats") {
+      rawVehicleBase[key] = value;
+    }
+  }
+
   return {
     sourceKeyIndex,
     vehicleId,
     vehicleName,
-    faultCodes: extractFaultCodes(row),
-    rawVehicle: row,
+    faultCodes: stats.faultCodes ?? extractFaultCodes(row),
+    stats,
+    rawVehicle: {
+      ...rawVehicleBase,
+      stats,
+    },
   };
 }
 
-async function fetchFaultCodesFromToken(token: string, sourceKeyIndex: number): Promise<TokenFetchSuccess> {
-  const rawPages: Record<string, unknown>[] = [];
-  const faults: FaultCodeEntry[] = [];
+async function fetchStatsChunkFromToken(
+  token: string,
+  requestedTypes: string[]
+): Promise<ChunkFetchResult> {
+  const params = new URLSearchParams({
+    types: requestedTypes.join(","),
+    limit: "200",
+  });
 
-  let after: string | null = null;
-  let pageGuard = 0;
+  const result = await callSamsara(token, `${SAMSARA_STATS_URL}?${params.toString()}`);
+  if (!result.ok) {
+    throw {
+      status: result.status,
+      requestedTypes,
+      message: extractErrorMessage(result.payload, result.status, "Samsara stats request failed"),
+    } as TokenFetchFailure;
+  }
 
-  while (pageGuard < 50) {
-    const params = new URLSearchParams({
-      types: "faultCodes",
-      limit: "200",
-    });
+  return {
+    rows: extractRows(result.payload),
+    rawPages: [result.payload],
+  };
+}
 
-    if (after) params.set("after", after);
+function extractErrorMessage(payload: Record<string, unknown>, status: number, fallback: string) {
+  if (typeof payload.message === "string") return payload.message;
+  if (typeof payload.error === "string") return payload.error;
+  return `${fallback} (${status})`;
+}
 
-    const response = await fetch(`${SAMSARA_STATS_URL}?${params.toString()}`, {
+async function callSamsara(token: string, url: string): Promise<ApiResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SAMSARA_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
       cache: "no-store",
+      signal: controller.signal,
     });
 
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-
-    if (!response.ok) {
-      const message =
-        typeof payload.message === "string"
-          ? payload.message
-          : typeof payload.error === "string"
-            ? payload.error
-            : `Samsara stats request failed (${response.status})`;
-
-      const failure: TokenFetchFailure = {
-        sourceKeyIndex,
-        status: response.status,
-        message,
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      return {
+        ok: false,
+        status: 408,
+        payload: { message: `Samsara request timed out after ${SAMSARA_REQUEST_TIMEOUT_MS}ms` },
       };
-
-      throw failure;
     }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
-    rawPages.push(payload);
+async function fetchFaultCodesFromToken(token: string, sourceKeyIndex: number): Promise<TokenFetchSuccess> {
+  const rawPages: Record<string, unknown>[] = [];
+  const failures: TokenFetchFailure[] = [];
+  const requestedBatches = chunkTypes(STATS_SNAPSHOT_TYPES, MAX_TYPES_PER_REQUEST);
+  const vehicleMap = new Map<string, FaultCodeEntry>();
+  const seenBatchSignatures = new Set<string>();
 
-    const rows = extractRows(payload);
-    for (const row of rows) {
-      faults.push(toFaultEntry(sourceKeyIndex, row));
+  for (const requestedTypes of requestedBatches) {
+    const batchSignature = requestedTypes.join(",");
+    if (seenBatchSignatures.has(batchSignature)) {
+      continue;
     }
+    seenBatchSignatures.add(batchSignature);
 
-    const nextAfter = extractAfterCursor(payload);
-    if (!nextAfter) break;
+    try {
+      const chunk = await fetchStatsChunkFromToken(token, requestedTypes);
+      rawPages.push(...chunk.rawPages);
 
-    after = nextAfter;
-    pageGuard += 1;
+      for (const row of chunk.rows) {
+        const entry = toFaultEntry(sourceKeyIndex, row);
+        const mergeKey = `${entry.sourceKeyIndex}:${entry.vehicleId}`;
+        const existing = vehicleMap.get(mergeKey);
+
+        if (!existing) {
+          vehicleMap.set(mergeKey, entry);
+          continue;
+        }
+
+        const mergedStats = { ...existing.stats, ...entry.stats };
+        const mergedRawVehicle = {
+          ...existing.rawVehicle,
+          ...entry.rawVehicle,
+          stats: mergedStats,
+        };
+
+        vehicleMap.set(mergeKey, {
+          ...existing,
+          vehicleName: existing.vehicleName ?? entry.vehicleName,
+          stats: mergedStats,
+          faultCodes: mergedStats.faultCodes ?? existing.faultCodes,
+          rawVehicle: mergedRawVehicle,
+        });
+      }
+    } catch (error) {
+      const failureRecord = asRecord(error);
+      failures.push({
+        sourceKeyIndex,
+        status: typeof failureRecord?.status === "number" ? failureRecord.status : undefined,
+        requestedTypes,
+        message:
+          typeof failureRecord?.message === "string"
+            ? failureRecord.message
+            : error instanceof Error
+              ? error.message
+              : "Unknown Samsara failure",
+      });
+    }
   }
 
   return {
     sourceKeyIndex,
     pagesFetched: rawPages.length,
     rawPages,
-    faults,
+    requestedBatches,
+    faults: Array.from(vehicleMap.values()),
+    failures,
   };
 }
 
@@ -190,45 +351,26 @@ export async function GET(request: Request) {
       );
     }
 
-    const settled = await Promise.allSettled(
-      keys.map((token, sourceKeyIndex) => fetchFaultCodesFromToken(token, sourceKeyIndex))
-    );
+    const successes = await Promise.all(keys.map((token, sourceKeyIndex) => fetchFaultCodesFromToken(token, sourceKeyIndex)));
 
-    const successes = settled
-      .filter((result): result is PromiseFulfilledResult<TokenFetchSuccess> => result.status === "fulfilled")
-      .map((result) => result.value);
-
-    const failures = settled
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => {
-        const reason = result.reason as TokenFetchFailure | Error | unknown;
-
-        const record = asRecord(reason);
-        const sourceKeyIndex = typeof record?.sourceKeyIndex === "number" ? record.sourceKeyIndex : -1;
-        const status = typeof record?.status === "number" ? record.status : undefined;
-        const message =
-          typeof record?.message === "string"
-            ? record.message
-            : reason instanceof Error
-              ? reason.message
-              : "Unknown Samsara failure";
-
-        return { sourceKeyIndex, status, message };
-      });
+    const failures = successes.flatMap((result) => result.failures);
 
     const faults = successes.flatMap((result) => result.faults);
+    const requestedBatches = successes[0]?.requestedBatches ?? chunkTypes(REQUESTED_STATS_TYPES, MAX_TYPES_PER_REQUEST);
 
     const allForbidden = failures.length > 0 && failures.every((failure) => failure.status === 401 || failure.status === 403);
 
     return NextResponse.json(
       {
+        requestedTypes: REQUESTED_STATS_TYPES,
+        requestedBatches,
         keyCount: keys.length,
         successCount: successes.length,
         failureCount: failures.length,
         faults,
         failures,
         guidance: allForbidden
-          ? "Samsara token likely missing 'Read Vehicle Statistics' scope for faultCodes."
+          ? "Samsara token likely missing 'Read Vehicle Statistics' scope for one or more requested stats types."
           : undefined,
       },
       { status: 200 }

@@ -22,7 +22,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await supabase
       .from("assets")
-      .select("asset_no, asset_unit_number, ownership_type")
+      .select("asset_no, asset_unit_number, ownership_type, vin, year, make, model")
       .eq("tenant_id", appUser.tenantId)
       .not("asset_no", "is", null)
       .order("asset_no", { ascending: true });
@@ -37,6 +37,10 @@ export async function GET(request: Request) {
         asset_no: string;
         asset_unit_number: string;
         ownership_type: string;
+        vin: string | null;
+        year: string | null;
+        make: string | null;
+        model: string | null;
       }
     >();
 
@@ -49,6 +53,10 @@ export async function GET(request: Request) {
           asset_no: assetNo,
           asset_unit_number: String(row.asset_unit_number ?? "").trim() || assetNo,
           ownership_type: String(row.ownership_type ?? "company").trim() || "company",
+          vin: String(row.vin ?? "").trim().toUpperCase() || null,
+          year: String(row.year ?? "").trim() || null,
+          make: String(row.make ?? "").trim() || null,
+          model: String(row.model ?? "").trim() || null,
         });
       }
     }

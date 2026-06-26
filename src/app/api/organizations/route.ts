@@ -18,6 +18,8 @@ type CreateOrganizationBody = {
   ein?: string;
   scac?: string;
   samsaraApiKey?: string;
+  samsaraWebhookUrl?: string;
+  samsaraWebhookSecret?: string;
   fuelguruFleetId?: string;
   notes?: string;
 };
@@ -89,6 +91,8 @@ export async function POST(request: Request) {
       ein: asOptionalString(body.ein),
       scac: asOptionalString(body.scac),
       samsara_api_key: asOptionalString(body.samsaraApiKey),
+      samsara_webhook_url: asOptionalString(body.samsaraWebhookUrl),
+      samsara_webhook_secret: asOptionalString(body.samsaraWebhookSecret),
       fuelguru_fleet_id: asOptionalString(body.fuelguruFleetId),
       notes: asOptionalString(body.notes),
       created_by: null,
