@@ -8,11 +8,27 @@ import AccountsTouchMenu from "@/components/AccountsTouchMenu";
 import MaintenanceTouchMenu from "@/components/MaintenanceTouchMenu";
 import DispatchTouchMenu from "@/components/DispatchTouchMenu";
 import VehicleActionSheet, { type Vehicle } from "@/components/VehicleActionSheet";
+import { FLEET_API_ROUTES } from "@/lib/fleet-api";
 
 type FleetViewClientProps = {
   role: AppRole;
   immersive?: boolean;
   viewMode?: "map" | "list";
+};
+
+type RecentAlertItem = {
+  id: string;
+  occurredAt: string;
+  summary: string;
+  severity: "critical" | "warning" | "info";
+};
+
+type AlertsSummary = {
+  total: number;
+  critical: number;
+  warning: number;
+  info: number;
+  topTypes: Array<{ type: string; count: number }>;
 };
 
 export default function FleetViewClient({ role, immersive = false, viewMode = "map" }: FleetViewClientProps) {
@@ -26,8 +42,62 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [syncLabel, setSyncLabel] = useState(
-    enableSamsara ? "Syncing Samsara..." : "Samsara sync disabled (local fleet mode)"
+    enableSamsara ? "Syncing live fleet data..." : "Fleet sync disabled (local fleet mode)"
   );
+  const [alertsPopupOpen, setAlertsPopupOpen] = useState(false);
+  const [recentAlerts, setRecentAlerts] = useState<RecentAlertItem[]>([]);
+  const [alertsSummary, setAlertsSummary] = useState<AlertsSummary | null>(null);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
+
+  const loadRecentAlerts = useCallback(async () => {
+    setAlertsLoading(true);
+    setAlertsError(null);
+
+    try {
+      const response = await fetch("/api/alerts/recent", { cache: "no-store" });
+      const payload = (await response.json().catch(() => ({}))) as {
+        summary?: AlertsSummary;
+        events?: RecentAlertItem[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setRecentAlerts([]);
+        setAlertsSummary(null);
+        setAlertsError(payload.error ?? "Unable to load alerts.");
+        return;
+      }
+
+      setAlertsSummary(payload.summary ?? null);
+      setRecentAlerts(Array.isArray(payload.events) ? payload.events : []);
+    } catch {
+      setRecentAlerts([]);
+      setAlertsSummary(null);
+      setAlertsError("Unable to load alerts.");
+    } finally {
+      setAlertsLoading(false);
+    }
+  }, []);
+
+  const toggleAlertsPopup = useCallback(() => {
+    setAlertsPopupOpen((current) => {
+      const next = !current;
+      if (next) {
+        setActiveTopSummaryMenu(null);
+        setActiveOverlaySummaryMenu(null);
+        setActiveListSummaryMenu(null);
+        void loadRecentAlerts();
+      }
+      return next;
+    });
+  }, [loadRecentAlerts]);
+
+  const formatAlertTime = useCallback((iso: string) => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "--";
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }, []);
 
   const fetchVehicles = useCallback(async () => {
     setRefreshing(true);
@@ -35,17 +105,17 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
     if (!enableSamsara) {
       setVehicles([]);
       setSelected(null);
-      setSyncLabel("Samsara sync disabled (local fleet mode)");
+      setSyncLabel("Fleet sync disabled (local fleet mode)");
       setRefreshing(false);
       return;
     }
 
     try {
-      const response = await fetch("/api/samsara/vehicles", { cache: "no-store" });
+      const response = await fetch(FLEET_API_ROUTES.vehicles, { cache: "no-store" });
       const data = await response.json();
 
       if (!response.ok) {
-        setSyncLabel("Samsara unavailable");
+        setSyncLabel("Fleet data unavailable");
         setVehicles([]);
         setSelected(null);
         setRefreshing(false);
@@ -62,9 +132,9 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
       }
 
       setVehicles(incoming);
-      setSyncLabel(`Live from Samsara (${incoming.length} vehicles)`);
+      setSyncLabel(`Live fleet data (${incoming.length} vehicles)`);
     } catch {
-      setSyncLabel("Samsara unavailable");
+      setSyncLabel("Fleet data unavailable");
       setVehicles([]);
       setSelected(null);
     } finally {
@@ -128,6 +198,53 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
     return [...vehicles].sort((a, b) => Number(a.atHome) - Number(b.atHome));
   }, [vehicles]);
 
+  const AlertsChip = ({ chipClassName, popupAlignClass = "right-0" }: { chipClassName: string; popupAlignClass?: string }) => (
+    <div className="pointer-events-auto relative">
+      <button onClick={toggleAlertsPopup} className={chipClassName}>
+        Alerts {statusCounts.alertsTotal}
+      </button>
+      {alertsPopupOpen && (
+        <div className={`absolute ${popupAlignClass} top-[calc(100%+6px)] z-40 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-rose-300/70 bg-slate-950 p-3 text-xs text-slate-100 shadow-2xl`}>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="font-semibold text-rose-200">Alerts (Last 24h)</p>
+            <button
+              onClick={() => setAlertsPopupOpen(false)}
+              className="rounded border border-white/20 px-2 py-0.5 text-[10px] font-semibold text-slate-200"
+            >
+              Close
+            </button>
+          </div>
+          {alertsLoading ? (
+            <p className="text-slate-300">Loading...</p>
+          ) : alertsError ? (
+            <p className="text-rose-300">{alertsError}</p>
+          ) : !alertsSummary || alertsSummary.total === 0 ? (
+            <p className="text-slate-300">No alert events in the last 24 hours.</p>
+          ) : (
+            <>
+              <div className="mb-2 rounded-lg border border-white/15 bg-slate-900/60 p-2 text-[11px] text-slate-200">
+                <p>Total: {alertsSummary.total}</p>
+                <p>Critical: {alertsSummary.critical} • Warning: {alertsSummary.warning} • Info: {alertsSummary.info}</p>
+                {alertsSummary.topTypes.length > 0 && (
+                  <p>Top: {alertsSummary.topTypes.map((item) => `${item.type} (${item.count})`).join(", ")}</p>
+                )}
+              </div>
+              <ul className="space-y-1.5">
+                {recentAlerts.slice(0, 5).map((event) => (
+                  <li key={event.id} className="leading-4 text-slate-200">
+                    <span className="text-slate-400">{formatAlertTime(event.occurredAt)}</span>
+                    <span className="mx-1 text-slate-500">•</span>
+                    <span>{event.summary}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className={immersive ? "h-full w-full px-2 py-2 sm:px-3 sm:py-3" : "w-full px-2 py-3 sm:px-3 sm:py-4 md:px-6 md:py-6 lg:mx-auto lg:max-w-7xl"}>
       <section className={immersive ? "glass flex h-full min-h-0 flex-col rounded-3xl p-2 sm:p-3" : "glass rounded-3xl p-2.5 sm:p-3 md:p-6"}>
@@ -169,9 +286,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
                   </div>
                 )}
               </div>
-              <span className="rounded-full bg-rose-900/40 px-3 py-1 text-[11px] text-rose-200">
-                Alerts {statusCounts.alertsTotal}
-              </span>
+              <AlertsChip chipClassName="rounded-full bg-rose-900/40 px-3 py-1 text-[11px] text-rose-200" />
               <button
                 onClick={() => void fetchVehicles()}
                 className="rounded-md border border-cyan-500/60 bg-cyan-950/40 px-3 py-1 text-xs font-semibold text-cyan-200 hover:bg-cyan-900/50"
@@ -219,9 +334,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
                 )}
               </div>
 
-              <span className="rounded-full border border-rose-300/70 bg-rose-900/60 px-3 py-1.5 text-xs font-semibold text-rose-100">
-                Alerts {statusCounts.alertsTotal}
-              </span>
+              <AlertsChip chipClassName="rounded-full border border-rose-300/70 bg-rose-900/60 px-3 py-1.5 text-xs font-semibold text-rose-100" popupAlignClass="left-0" />
             </div>
           )}
 
@@ -262,9 +375,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
                     </div>
                   )}
                 </div>
-                <span className="rounded-full border border-rose-300/80 bg-rose-900/60 px-3 py-1.5 text-[11px] font-semibold text-rose-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm">
-                  Alerts {statusCounts.alertsTotal}
-                </span>
+                <AlertsChip chipClassName="rounded-full border border-rose-300/80 bg-rose-900/60 px-3 py-1.5 text-[11px] font-semibold text-rose-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm" popupAlignClass="left-0" />
               </div>
               <div className="absolute right-2 top-2 z-30">
                 <button

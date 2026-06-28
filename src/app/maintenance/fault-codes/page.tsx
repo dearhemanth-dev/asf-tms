@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import TopNav from "@/components/TopNav";
 import { APP_ROLES, type AppRole } from "@/lib/auth";
+import { FLEET_API_ROUTES } from "@/lib/fleet-api";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 
 type UserProfile = {
@@ -28,6 +29,21 @@ type FaultCodesResponse = {
   faults: FaultRecord[];
   failures?: Array<{ sourceKeyIndex: number; status?: number; message: string }>;
   guidance?: string;
+  error?: string;
+};
+
+type WebhookMonitorResponse = {
+  stale: boolean;
+  staleThresholdHours: number;
+  lastReceivedAt: string | null;
+  lastSuccessAt: string | null;
+  totalsLast24h: {
+    received: number;
+    inserted: number;
+    duplicates: number;
+    errors: number;
+  };
+  topEventTypes: Array<{ eventType: string; count: number }>;
   error?: string;
 };
 
@@ -1190,6 +1206,8 @@ export default function MaintenanceFaultCodesPage() {
   const [dealerLoading, setDealerLoading] = useState(false);
   const [nearbyDealers, setNearbyDealers] = useState<NearbyDealer[]>([]);
   const [dealerError, setDealerError] = useState<string | null>(null);
+  const [webhookMonitor, setWebhookMonitor] = useState<WebhookMonitorResponse | null>(null);
+  const [monitorError, setMonitorError] = useState<string | null>(null);
 
   useEffect(() => {
     if (demoMode) {
@@ -1281,7 +1299,7 @@ export default function MaintenanceFaultCodesPage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/samsara/fault-codes", { cache: "no-store" });
+      const response = await fetch(FLEET_API_ROUTES.faultCodes, { cache: "no-store" });
       const data = (await response.json().catch(() => ({}))) as FaultCodesResponse;
 
       if (!response.ok) {
@@ -1304,6 +1322,39 @@ export default function MaintenanceFaultCodesPage() {
     if (loadingProfile || effectiveRole !== "maintenance") return;
     void loadFaultCodes(false);
   }, [loadingProfile, effectiveRole]);
+
+  useEffect(() => {
+    if (loadingProfile || effectiveRole !== "maintenance") return;
+
+    let cancelled = false;
+
+    async function loadWebhookMonitor() {
+      try {
+        const response = await fetch("/api/maintenance/webhook-monitor", { cache: "no-store" });
+        const data = (await response.json().catch(() => ({}))) as WebhookMonitorResponse;
+        if (cancelled) return;
+
+        if (!response.ok) {
+          setWebhookMonitor(null);
+          setMonitorError(data.error ?? "Unable to load webhook monitor.");
+          return;
+        }
+
+        setWebhookMonitor(data);
+        setMonitorError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setWebhookMonitor(null);
+        setMonitorError(error instanceof Error ? error.message : "Unable to load webhook monitor.");
+      }
+    }
+
+    void loadWebhookMonitor();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadingProfile, effectiveRole, refreshing]);
 
   useEffect(() => {
     if (loadingProfile || effectiveRole !== "maintenance") return;
@@ -1640,7 +1691,7 @@ export default function MaintenanceFaultCodesPage() {
             <div>
               <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">Maintenance</p>
               <h1 className="mt-1 text-2xl font-black text-slate-100">Fault Codes</h1>
-              <p className="mt-1 text-sm text-slate-300">Live vehicle fault-code feed from Samsara stats.</p>
+              <p className="mt-1 text-sm text-slate-300">Live vehicle fault-code feed from the connected fleet provider.</p>
             </div>
 
             <button
@@ -1657,6 +1708,31 @@ export default function MaintenanceFaultCodesPage() {
             <article className="rounded-lg border border-slate-700 bg-slate-950/60 p-3">
               <p className="text-xs uppercase tracking-wide text-slate-400">Total Fault Records</p>
               <p className="mt-1 text-2xl font-extrabold text-amber-200">{totalFaults}</p>
+            </article>
+            <article className="rounded-lg border border-slate-700 bg-slate-950/60 p-3">
+              <p className="text-xs uppercase tracking-wide text-slate-400">Webhook Health (24h)</p>
+              {monitorError ? (
+                <p className="mt-1 text-xs text-rose-300">{monitorError}</p>
+              ) : !webhookMonitor ? (
+                <p className="mt-1 text-xs text-slate-300">Loading monitor...</p>
+              ) : (
+                <>
+                  <p className={`mt-1 text-sm font-bold ${webhookMonitor.stale ? "text-amber-300" : "text-emerald-300"}`}>
+                    {webhookMonitor.stale ? "Stale" : "Receiving"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Last event: {webhookMonitor.lastReceivedAt ? new Date(webhookMonitor.lastReceivedAt).toLocaleString() : "No events yet"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Rx {webhookMonitor.totalsLast24h.received} | Inserted {webhookMonitor.totalsLast24h.inserted} | Dup {webhookMonitor.totalsLast24h.duplicates} | Err {webhookMonitor.totalsLast24h.errors}
+                  </p>
+                  {webhookMonitor.topEventTypes.length > 0 && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      Top: {webhookMonitor.topEventTypes.map((entry) => `${entry.eventType} (${entry.count})`).join(", ")}
+                    </p>
+                  )}
+                </>
+              )}
             </article>
           </div>
 
@@ -1951,7 +2027,7 @@ export default function MaintenanceFaultCodesPage() {
 
           {payload?.failures && payload.failures.length > 0 && (
             <div className="mt-5 rounded-xl border border-amber-500/35 bg-amber-500/10 p-3">
-              <p className="text-sm font-semibold text-amber-200">Some Samsara keys failed</p>
+              <p className="text-sm font-semibold text-amber-200">Some fleet connections failed</p>
               <ul className="mt-2 space-y-1 text-xs text-amber-100">
                 {payload.failures.map((failure, idx) => (
                   <li key={`${failure.sourceKeyIndex}-${idx}`}>

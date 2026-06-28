@@ -18,6 +18,9 @@ type FuelTransactionLine = {
   transaction_date: string | null;
   transaction_time: string | null;
   driver_name: string | null;
+  truck_stop_name: string | null;
+  truck_stop_city: string | null;
+  truck_stop_state: string | null;
   type: "Cash Advance" | "Diesel" | "DEF" | "Reefer" | "Other";
   price_per_gallon: number | null;
   gallons: number | null;
@@ -57,6 +60,11 @@ type FuelDrilldownResponse = {
   error?: string;
 };
 
+type DetailContext = {
+  tx: FuelTransactionLine;
+  peers: FuelTransactionLine[];
+};
+
 function currency(value: number) {
   return value.toLocaleString("en-US", {
     style: "currency",
@@ -81,6 +89,153 @@ function numberText(value: number | null, maxFractionDigits: number) {
   });
 }
 
+function toReadableCase(value: string) {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) return normalized;
+
+  const lettersOnly = normalized.replace(/[^A-Za-z]/g, "");
+  const looksAllCaps = lettersOnly.length > 0 && lettersOnly === lettersOnly.toUpperCase();
+  if (!looksAllCaps) return normalized;
+
+  return normalized
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatStopName(transaction: FuelTransactionLine) {
+  const stop = transaction.truck_stop_name?.trim();
+  if (!stop) return "Unknown Truck Stop";
+  return toReadableCase(stop);
+}
+
+function formatStopCityState(transaction: FuelTransactionLine) {
+  const city = transaction.truck_stop_city?.trim();
+  const state = transaction.truck_stop_state?.trim();
+  const formattedCity = city ? toReadableCase(city) : null;
+  if (formattedCity && state) return `${formattedCity}, ${state}`;
+  if (formattedCity) return formattedCity;
+  if (state) return state;
+  return "Location unavailable";
+}
+
+function summarizeDrivers(transactions: FuelTransactionLine[]) {
+  const unique = Array.from(
+    new Set(
+      transactions
+        .map((item) => item.driver_name?.trim())
+        .filter((name): name is string => Boolean(name))
+    )
+  );
+
+  if (unique.length === 0) return "Unassigned";
+  if (unique.length <= 2) return unique.join(", ");
+  return `${unique[0]}, ${unique[1]} +${unique.length - 2} more`;
+}
+
+function summarizeTopStops(transactions: FuelTransactionLine[]) {
+  const counts = new Map<string, { label: string; count: number }>();
+
+  for (const transaction of transactions) {
+    const stopName = formatStopName(transaction);
+    const cityState = formatStopCityState(transaction);
+    const key = `${stopName}::${cityState}`;
+    const existing = counts.get(key);
+
+    if (existing) {
+      existing.count += 1;
+    } else {
+      counts.set(key, {
+        label: cityState === "Location unavailable" ? stopName : `${stopName} (${cityState})`,
+        count: 1,
+      });
+    }
+  }
+
+  const topStops = Array.from(counts.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 2);
+
+  if (topStops.length === 0) return "No stop data";
+
+  return topStops.map((stop) => `${stop.label} (${stop.count})`).join(" • ");
+}
+
+function getHighPriceThreshold(transactions: FuelTransactionLine[]) {
+  const prices = transactions
+    .map((transaction) => transaction.price_per_gallon)
+    .filter((price): price is number => price !== null)
+    .sort((a, b) => a - b);
+
+  if (prices.length < 3) return null;
+  if (prices[0] === prices[prices.length - 1]) return null;
+
+  const thresholdIndex = Math.floor((prices.length - 1) * 0.75);
+  return prices[thresholdIndex] ?? null;
+}
+
+function isHigherUnitPrice(pricePerGallon: number | null, threshold: number | null) {
+  if (pricePerGallon === null || threshold === null) return false;
+  return pricePerGallon >= threshold;
+}
+
+function getTypeSkin(type: FuelTransactionLine["type"]) {
+  if (type === "Diesel") {
+    return {
+      panel: "border-cyan-500/30 bg-cyan-500/8 ring-cyan-500/20",
+      chip: "border-cyan-300/30 bg-cyan-400/15 text-cyan-100",
+      tableHead: "bg-cyan-900/30",
+      stripe: "odd:bg-cyan-500/[0.04] even:bg-slate-950/30",
+    };
+  }
+
+  if (type === "DEF") {
+    return {
+      panel: "border-emerald-500/30 bg-emerald-500/8 ring-emerald-500/20",
+      chip: "border-emerald-300/30 bg-emerald-400/15 text-emerald-100",
+      tableHead: "bg-emerald-900/30",
+      stripe: "odd:bg-emerald-500/[0.04] even:bg-slate-950/30",
+    };
+  }
+
+  if (type === "Reefer") {
+    return {
+      panel: "border-indigo-500/30 bg-indigo-500/8 ring-indigo-500/20",
+      chip: "border-indigo-300/30 bg-indigo-400/15 text-indigo-100",
+      tableHead: "bg-indigo-900/30",
+      stripe: "odd:bg-indigo-500/[0.04] even:bg-slate-950/30",
+    };
+  }
+
+  if (type === "Cash Advance") {
+    return {
+      panel: "border-amber-500/30 bg-amber-500/8 ring-amber-500/20",
+      chip: "border-amber-300/30 bg-amber-400/15 text-amber-100",
+      tableHead: "bg-amber-900/30",
+      stripe: "odd:bg-amber-500/[0.04] even:bg-slate-950/30",
+    };
+  }
+
+  return {
+    panel: "border-fuchsia-500/30 bg-fuchsia-500/8 ring-fuchsia-500/20",
+    chip: "border-fuchsia-300/30 bg-fuchsia-400/15 text-fuchsia-100",
+    tableHead: "bg-fuchsia-900/30",
+    stripe: "odd:bg-fuchsia-500/[0.04] even:bg-slate-950/30",
+  };
+}
+
+function transactionCategory(type: FuelTransactionLine["type"]) {
+  if (type === "Diesel" || type === "DEF" || type === "Reefer") return "Fuel Purchase";
+  if (type === "Cash Advance") return "Cash Advance";
+  return "Operational Charge";
+}
+
+function transactionRankByTotal(tx: FuelTransactionLine, peers: FuelTransactionLine[]) {
+  const sorted = [...peers].sort((a, b) => b.total - a.total);
+  const rank = sorted.findIndex((entry) => entry.id === tx.id);
+  if (rank < 0) return null;
+  return `${rank + 1}/${sorted.length}`;
+}
+
 export default function FuelReportPage() {
   const router = useRouter();
   const [session, setSession] = useState<{ ready: boolean; role: AppRole | null }>({
@@ -100,6 +255,7 @@ export default function FuelReportPage() {
   const [drilldownError, setDrilldownError] = useState<string | null>(null);
   const [drilldownCache, setDrilldownCache] = useState<Record<string, FuelTypeDrilldown>>({});
   const [expandedTypeByUnit, setExpandedTypeByUnit] = useState<Record<string, FuelTransactionLine["type"] | null>>({});
+  const [detailTransaction, setDetailTransaction] = useState<DetailContext | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -357,7 +513,6 @@ export default function FuelReportPage() {
                       <div>
                         <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">#{index + 1} Unit</p>
                         <h2 className="mt-1 text-base font-semibold text-white sm:text-lg">{row.unit_number}</h2>
-                        <p className="mt-1 text-xs text-slate-300">{row.row_count} imported transactions</p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold text-emerald-200 sm:text-base">{currency(row.total_fuel_cost)}</p>
@@ -384,6 +539,18 @@ export default function FuelReportPage() {
                             {typeRows.map((typeRow) => {
                               const isTypeExpanded = expandedType === typeRow.type;
                               const typeTransactions = drilldownData?.transactionsByType[typeRow.type] ?? [];
+                              const highPriceThreshold = getHighPriceThreshold(typeTransactions);
+                              const typeSkin = getTypeSkin(typeRow.type);
+                              const showGallonsColumn = typeTransactions.some((tx) => tx.gallons !== null);
+                              const showUnitPriceColumn = typeTransactions.some((tx) => tx.price_per_gallon !== null);
+                              const tableMinWidthClass =
+                                showGallonsColumn && showUnitPriceColumn
+                                  ? "min-w-[600px]"
+                                  : showGallonsColumn || showUnitPriceColumn
+                                    ? "min-w-[540px]"
+                                    : "min-w-[460px]";
+                              const stopColWidthClass =
+                                showGallonsColumn || showUnitPriceColumn ? "w-[132px]" : "w-[122px]";
                               return (
                                 <div key={typeRow.type} className="space-y-2">
                                   <button
@@ -397,68 +564,85 @@ export default function FuelReportPage() {
                                   >
                                     <div className="flex items-start justify-between gap-2">
                                       <div>
-                                        <p className="text-xs font-semibold text-cyan-200">{typeRow.type}</p>
+                                          <p className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${typeSkin.chip}`}>
+                                            {typeRow.type}
+                                          </p>
                                         <p className="text-[11px] text-slate-300">{typeRow.transaction_count} transactions</p>
                                       </div>
                                       <p className="text-sm font-semibold text-emerald-200">{currency(typeRow.total)}</p>
                                     </div>
-                                    <p className="mt-1 text-[11px] text-slate-400">
-                                      {isTypeExpanded ? "Hide transactions" : "View transactions"}
-                                    </p>
                                   </button>
 
                                   {isTypeExpanded && (
-                                    <div className="rounded-xl border border-cyan-500/20 bg-slate-900/35 p-3 ring-1 ring-cyan-500/10">
-                                      <div className="mb-3 flex items-center justify-between gap-2">
-                                        <p className="text-sm font-semibold text-cyan-100">{typeRow.type} Transactions</p>
-                                        <p className="text-xs text-slate-400">{typeTransactions.length} rows</p>
+                                      <div className={`rounded-xl border p-3 ring-1 ${typeSkin.panel}`}>
+                                      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-white">{typeRow.type} Transactions</p>
+                                          <p className="text-xs text-slate-400">Driver(s): {summarizeDrivers(typeTransactions)}</p>
+                                          <p className="text-xs text-slate-300">Frequent Stops: {summarizeTopStops(typeTransactions)}</p>
+                                        </div>
+                                        <p className="w-fit rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-300">
+                                          {typeTransactions.length} rows
+                                        </p>
                                       </div>
 
-                                      <div className="space-y-2 md:hidden">
-                                        {typeTransactions.map((tx) => (
-                                          <div key={tx.id} className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
-                                            <div className="flex items-start justify-between gap-2">
-                                              <div>
-                                                <p className="text-xs font-semibold text-cyan-200">{tx.type}</p>
-                                                <p className="text-[11px] text-slate-300">Txn #{tx.transaction_number}</p>
-                                              </div>
-                                              <p className="text-sm font-semibold text-emerald-200">{currency(tx.total)}</p>
-                                            </div>
-                                            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-                                              <p>Date/Time: {formatDateTime(tx.transaction_date, tx.transaction_time)}</p>
-                                              <p>Driver: {tx.driver_name ?? "-"}</p>
-                                              <p>Price/gal: {tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}</p>
-                                              <p>Gallons: {numberText(tx.gallons, 4)}</p>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-
-                                      <div className="hidden overflow-x-auto md:block">
-                                        <table className="min-w-full border-collapse">
+                                        <div className="overflow-x-auto">
+                                          <table className={`${tableMinWidthClass} table-fixed border-collapse`}>
+                                          <colgroup>
+                                            <col className="w-[80px]" />
+                                            {showGallonsColumn && <col className="w-[58px]" />}
+                                            {showUnitPriceColumn && <col className="w-[76px]" />}
+                                            <col className={stopColWidthClass} />
+                                            <col className="w-[80px]" />
+                                            <col className="w-[64px]" />
+                                            <col className="w-[44px]" />
+                                          </colgroup>
                                           <thead>
                                             <tr>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Date/Time</th>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Type</th>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Txn #</th>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Driver</th>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Price/gal</th>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Gallons</th>
-                                              <th className="border border-white/10 bg-slate-900 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">Total</th>
+                                                <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>Total$</th>
+                                                {showGallonsColumn && (
+                                                  <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>Gal</th>
+                                                )}
+                                                {showUnitPriceColumn && (
+                                                  <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>Unit$</th>
+                                                )}
+                                                <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>STOP</th>
+                                                <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>Date</th>
+                                                <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>Txn</th>
+                                                <th className={`border border-white/10 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300 sm:px-3 sm:py-2 ${typeSkin.tableHead}`}>Info</th>
                                             </tr>
                                           </thead>
                                           <tbody>
-                                            {typeTransactions.map((tx) => (
-                                              <tr key={tx.id} className="hover:bg-white/3">
-                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{formatDateTime(tx.transaction_date, tx.transaction_time)}</td>
-                                                <td className="border border-white/10 px-3 py-2 text-xs font-medium text-cyan-200">{tx.type}</td>
-                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.transaction_number}</td>
-                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.driver_name ?? "-"}</td>
-                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}</td>
-                                                <td className="border border-white/10 px-3 py-2 text-xs text-slate-200">{numberText(tx.gallons, 4)}</td>
-                                                <td className="border border-white/10 px-3 py-2 text-xs font-semibold text-emerald-200">{currency(tx.total)}</td>
-                                              </tr>
-                                            ))}
+                                            {typeTransactions.map((tx) => {
+                                              const highUnitPrice = isHigherUnitPrice(tx.price_per_gallon, highPriceThreshold);
+                                              return (
+                                                <tr key={tx.id} className={`${typeSkin.stripe} hover:bg-white/5 ${highUnitPrice ? "bg-amber-300/8" : ""}`}>
+                                                  <td className={`whitespace-nowrap border border-white/10 px-2 py-1.5 text-[11px] font-semibold sm:px-3 sm:py-2 sm:text-xs ${highUnitPrice ? "text-amber-200" : "text-emerald-200"}`}>{currency(tx.total)}</td>
+                                                  {showGallonsColumn && (
+                                                    <td className={`whitespace-nowrap border border-white/10 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 sm:text-xs ${highUnitPrice ? "font-semibold text-amber-200" : "text-slate-200"}`}>{numberText(tx.gallons, 4)}</td>
+                                                  )}
+                                                  {showUnitPriceColumn && (
+                                                    <td className={`whitespace-nowrap border border-white/10 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 sm:text-xs ${highUnitPrice ? "font-semibold text-amber-200" : "text-slate-200"}`}>
+                                                      {tx.price_per_gallon === null ? "-" : `$${numberText(tx.price_per_gallon, 6)}`}
+                                                    </td>
+                                                  )}
+                                                  <td className="border border-white/10 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 sm:text-xs">
+                                                    <p className="truncate font-medium text-cyan-200">{formatStopName(tx)}</p>
+                                                    <p className="truncate text-slate-300">{formatStopCityState(tx)}</p>
+                                                  </td>
+                                                  <td className="whitespace-nowrap border border-white/10 px-2 py-1.5 text-[11px] text-slate-200 sm:px-3 sm:py-2 sm:text-xs">{formatDateTime(tx.transaction_date, tx.transaction_time)}</td>
+                                                  <td className="whitespace-nowrap border border-white/10 px-2 py-1.5 text-[11px] text-slate-200 sm:px-3 sm:py-2 sm:text-xs">{tx.transaction_number}</td>
+                                                  <td className="whitespace-nowrap border border-white/10 px-2 py-1.5 text-[11px] sm:px-3 sm:py-2 sm:text-xs">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setDetailTransaction({ tx, peers: typeTransactions })}
+                                                      className="rounded-md border border-white/15 bg-white/8 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-200 transition hover:bg-white/15"
+                                                    >
+                                                      Details
+                                                    </button>
+                                                  </td>
+                                                </tr>
+                                            )})}
                                           </tbody>
                                         </table>
                                       </div>
@@ -478,6 +662,112 @@ export default function FuelReportPage() {
           )}
         </section>
       </div>
+
+      {detailTransaction && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/75 p-3 sm:items-center">
+          <div className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Transaction Details</p>
+                <p className="mt-1 text-base font-semibold text-white">{formatStopName(detailTransaction.tx)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailTransaction(null)}
+                className="rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-xs font-semibold text-slate-100 transition hover:bg-white/15"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Type</p>
+                <p className="mt-1 font-semibold text-slate-100">{detailTransaction.tx.type}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Total $</p>
+                <p className="mt-1 font-semibold text-emerald-200">{currency(detailTransaction.tx.total)}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Category</p>
+                <p className="mt-1 font-semibold text-slate-100">{transactionCategory(detailTransaction.tx.type)}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Txn #</p>
+                <p className="mt-1 font-semibold text-slate-100">{detailTransaction.tx.transaction_number}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Type Share</p>
+                <p className="mt-1 font-semibold text-slate-100">
+                  {detailTransaction.peers.length > 0
+                    ? `${numberText(
+                        (detailTransaction.tx.total /
+                          detailTransaction.peers.reduce((sum, peer) => sum + peer.total, 0)) *
+                          100,
+                        2
+                      )}%`
+                    : "-"}
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Rank In Type</p>
+                <p className="mt-1 font-semibold text-slate-100">{transactionRankByTotal(detailTransaction.tx, detailTransaction.peers) ?? "-"}</p>
+              </div>
+              {detailTransaction.tx.driver_name && (
+                <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Driver</p>
+                  <p className="mt-1 font-semibold text-slate-100">{detailTransaction.tx.driver_name}</p>
+                </div>
+              )}
+              {detailTransaction.tx.gallons !== null && (
+                <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Gallons</p>
+                  <p className="mt-1 font-semibold text-slate-100">{numberText(detailTransaction.tx.gallons, 4)}</p>
+                </div>
+              )}
+              {detailTransaction.tx.price_per_gallon !== null && (
+                <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Unit $</p>
+                  <p className="mt-1 font-semibold text-slate-100">${numberText(detailTransaction.tx.price_per_gallon, 6)}</p>
+                </div>
+              )}
+              {detailTransaction.tx.gallons !== null && detailTransaction.tx.gallons > 0 && (
+                <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Effective $/Gal</p>
+                  <p className="mt-1 font-semibold text-slate-100">${numberText(detailTransaction.tx.total / detailTransaction.tx.gallons, 6)}</p>
+                </div>
+              )}
+              {detailTransaction.tx.gallons !== null &&
+                detailTransaction.tx.gallons > 0 &&
+                detailTransaction.tx.price_per_gallon !== null && (
+                <>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Base Fuel $</p>
+                    <p className="mt-1 font-semibold text-slate-100">
+                      {currency(detailTransaction.tx.gallons * detailTransaction.tx.price_per_gallon)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-400">Other Cost $</p>
+                    <p className="mt-1 font-semibold text-slate-100">
+                      {currency(
+                        detailTransaction.tx.total -
+                          detailTransaction.tx.gallons * detailTransaction.tx.price_per_gallon
+                      )}
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-2 rounded-lg border border-white/10 bg-white/5 p-2 text-xs text-slate-200">
+              <p><span className="text-slate-400">Location:</span> {formatStopCityState(detailTransaction.tx)}</p>
+              <p className="mt-1"><span className="text-slate-400">Date/Time:</span> {formatDateTime(detailTransaction.tx.transaction_date, detailTransaction.tx.transaction_time)}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

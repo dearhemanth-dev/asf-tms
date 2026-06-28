@@ -8,6 +8,9 @@ type FuelExpenseRow = {
   transaction_time: string | null;
   transaction_number: string | null;
   driver_name: string | null;
+  truck_stop_name: string | null;
+  truck_stop_city: string | null;
+  truck_stop_state: string | null;
   total_amount_due: string | number | null;
   cash_advance_amount: string | number | null;
   diesel_gallons: string | number | null;
@@ -27,6 +30,9 @@ type FuelTransactionLine = {
   transaction_date: string | null;
   transaction_time: string | null;
   driver_name: string | null;
+  truck_stop_name: string | null;
+  truck_stop_city: string | null;
+  truck_stop_state: string | null;
   type: "Cash Advance" | "Diesel" | "DEF" | "Reefer" | "Other";
   price_per_gallon: number | null;
   gallons: number | null;
@@ -57,6 +63,9 @@ function normalizeUnit(rawUnit: string | null) {
 function toFuelLines(row: FuelExpenseRow): FuelTransactionLine[] {
   const transactionNumber = (row.transaction_number ?? "").trim() || "N/A";
   const driverName = row.driver_name?.trim() || null;
+  const truckStopName = row.truck_stop_name?.trim() || null;
+  const truckStopCity = row.truck_stop_city?.trim() || null;
+  const truckStopState = row.truck_stop_state?.trim() || null;
   const baseId = `${transactionNumber}-${row.transaction_date ?? "na"}-${row.transaction_time ?? "na"}`;
   const lines: FuelTransactionLine[] = [];
 
@@ -78,6 +87,9 @@ function toFuelLines(row: FuelExpenseRow): FuelTransactionLine[] {
       transaction_date: row.transaction_date,
       transaction_time: row.transaction_time,
       driver_name: driverName,
+      truck_stop_name: truckStopName,
+      truck_stop_city: truckStopCity,
+      truck_stop_state: truckStopState,
       type: "Cash Advance",
       price_per_gallon: null,
       gallons: null,
@@ -92,6 +104,9 @@ function toFuelLines(row: FuelExpenseRow): FuelTransactionLine[] {
       transaction_date: row.transaction_date,
       transaction_time: row.transaction_time,
       driver_name: driverName,
+      truck_stop_name: truckStopName,
+      truck_stop_city: truckStopCity,
+      truck_stop_state: truckStopState,
       type: "Diesel",
       price_per_gallon: dieselPpg > 0 ? dieselPpg : null,
       gallons: dieselGallons > 0 ? dieselGallons : null,
@@ -106,6 +121,9 @@ function toFuelLines(row: FuelExpenseRow): FuelTransactionLine[] {
       transaction_date: row.transaction_date,
       transaction_time: row.transaction_time,
       driver_name: driverName,
+      truck_stop_name: truckStopName,
+      truck_stop_city: truckStopCity,
+      truck_stop_state: truckStopState,
       type: "DEF",
       price_per_gallon: defPpg > 0 ? defPpg : null,
       gallons: defGallons > 0 ? defGallons : null,
@@ -120,6 +138,9 @@ function toFuelLines(row: FuelExpenseRow): FuelTransactionLine[] {
       transaction_date: row.transaction_date,
       transaction_time: row.transaction_time,
       driver_name: driverName,
+      truck_stop_name: truckStopName,
+      truck_stop_city: truckStopCity,
+      truck_stop_state: truckStopState,
       type: "Reefer",
       price_per_gallon: reeferPpg > 0 ? reeferPpg : null,
       gallons: reeferGallons > 0 ? reeferGallons : null,
@@ -134,6 +155,9 @@ function toFuelLines(row: FuelExpenseRow): FuelTransactionLine[] {
       transaction_date: row.transaction_date,
       transaction_time: row.transaction_time,
       driver_name: driverName,
+      truck_stop_name: truckStopName,
+      truck_stop_city: truckStopCity,
+      truck_stop_state: truckStopState,
       type: "Other",
       price_per_gallon: null,
       gallons: null,
@@ -201,7 +225,7 @@ export async function GET(request: Request) {
   if (requestedUnit) {
     const { data, error } = await supabase
       .from("fuel_expenses")
-      .select("unit_number,transaction_date,transaction_time,transaction_number,driver_name,total_amount_due,cash_advance_amount,diesel_gallons,diesel_price_per_gallon,diesel_cost,def_gallons,def_price_per_gallon,def_cost,reefer_gallons,reefer_price_per_gallon,reefer_fuel_cost")
+      .select("unit_number,transaction_date,transaction_time,transaction_number,driver_name,truck_stop_name,truck_stop_city,truck_stop_state,total_amount_due,cash_advance_amount,diesel_gallons,diesel_price_per_gallon,diesel_cost,def_gallons,def_price_per_gallon,def_cost,reefer_gallons,reefer_price_per_gallon,reefer_fuel_cost")
       .eq("tenant_id", appUser.tenantId)
       .eq("unit_number", requestedUnit)
       .gte("transaction_date", startDate)

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { APP_ROLES, type AppRole } from "@/lib/auth";
+import { FLEET_API_ROUTES } from "@/lib/fleet-api";
 
 type LiveVehicle = {
   id: string;
@@ -111,7 +112,7 @@ export default function VehicleRankingReportPage() {
 
       try {
         const [vehicleResponse, assetResponse] = await Promise.all([
-          fetch("/api/samsara/vehicles", { cache: "no-store" }),
+          fetch(FLEET_API_ROUTES.vehicles, { cache: "no-store" }),
           fetch("/api/assets", { cache: "no-store" }),
         ]);
 
@@ -287,7 +288,7 @@ export default function VehicleRankingReportPage() {
     setRefreshing(true);
     try {
       const [vehicleResponse, assetResponse] = await Promise.all([
-        fetch("/api/samsara/vehicles", { cache: "no-store" }),
+          fetch(FLEET_API_ROUTES.vehicles, { cache: "no-store" }),
         fetch("/api/assets", { cache: "no-store" }),
       ]);
 
@@ -372,7 +373,7 @@ export default function VehicleRankingReportPage() {
             </div>
           ) : displayedRows.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-slate-950/65 px-4 py-8 text-center text-sm text-slate-300">
-              No vehicles found yet. Connect Samsara and assets to populate the ranking report.
+              No vehicles found yet. Connect the fleet provider and assets to populate the ranking report.
             </div>
           ) : (
             displayedRows.map((row, index) => (
@@ -496,7 +497,7 @@ export default function VehicleRankingReportPage() {
                 ) : displayedRows.length === 0 ? (
                   <tr>
                     <td colSpan={16} className="border border-white/10 px-4 py-10 text-center text-sm text-slate-300">
-                      No vehicles found yet. Connect Samsara and assets to populate the ranking table.
+                      No vehicles found yet. Connect the fleet provider and assets to populate the ranking table.
                     </td>
                   </tr>
                 ) : (

@@ -32,6 +32,7 @@ export default function TopNav({
     if (role === "management") {
       return [
         { href: "/reports/vehicle-ranking", label: "Vehicle Ranking" },
+        { href: "/reports/driver-ranking", label: "Driver Ranking" },
         { href: "/reports/repairs", label: "Repairs Report" },
         { href: "/fuel-expenses/report", label: "Fuel Report" },
       ];

@@ -105,8 +105,7 @@ export default function LoginPage() {
       </div>
 
       <section className="relative mx-auto mt-16 w-full max-w-md rounded-2xl border border-white/50 bg-[#0f2f4552] p-6 shadow-2xl shadow-[#17405940] backdrop-blur-md">
-        <h1 className="text-xl font-extrabold tracking-tight text-[#fff3e2]">ASF Carriers</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-100/85">{combinedOrganizationLabel}</p>
+        {/* Organization label intentionally hidden for now; keep data wiring for easy re-enable. */}
 
         <form className="mt-6 space-y-3" onSubmit={onSubmit}>
           <input
