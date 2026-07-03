@@ -51,14 +51,42 @@ export default function LoginPage() {
     setMessage(null);
 
     try {
+      const sanitized = username.trim().toLowerCase();
+      const loginKey = sanitized.includes("@") ? sanitized.split("@")[0] : sanitized;
+      const demoRoleByUser = {
+        gsmanager: "management",
+        gsaccounts: "accounts",
+        gsmaintenance: "maintenance",
+        gsdispatch: "dispatch",
+        gsdriver: "driver",
+        rbmanager: "management",
+        rbaccounts: "accounts",
+        rbmaintenance: "maintenance",
+        rbdispatch: "dispatch",
+        rbdriver: "driver",
+      } as const;
+      const roleFromLogin = demoRoleByUser[loginKey as keyof typeof demoRoleByUser];
+
       if (!hasSupabaseEnv) {
-        setMessage("Login unavailable");
+        if (!roleFromLogin || password !== "p") {
+          setMessage("Invalid login credentials");
+          return;
+        }
+
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("demoUsername", loginKey);
+          window.sessionStorage.setItem("demoRole", roleFromLogin);
+          document.cookie = `asf_login=${encodeURIComponent(loginKey)}; path=/; max-age=28800; samesite=lax`;
+          document.cookie = `asf_role=${encodeURIComponent(roleFromLogin)}; path=/; max-age=28800; samesite=lax`;
+          window.location.href = `/fleet?demoRole=${roleFromLogin}&ts=${Date.now()}`;
+          return;
+        }
+
+        router.replace(`/fleet?demoRole=${roleFromLogin}`);
         return;
       }
 
       const supabase = getSupabaseBrowserClient();
-      const sanitized = username.trim().toLowerCase();
-      const loginKey = sanitized.includes("@") ? sanitized.split("@")[0] : sanitized;
 
       const { data: userRow, error } = await supabase
         .from("Users")
@@ -73,7 +101,6 @@ export default function LoginPage() {
 
       const role = userRow.UserType as AppRole;
       const nextRoute = "/fleet";
-
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem("demoUsername", loginKey);
         window.sessionStorage.setItem("demoRole", role);
@@ -105,7 +132,10 @@ export default function LoginPage() {
       </div>
 
       <section className="relative mx-auto mt-16 w-full max-w-md rounded-2xl border border-white/50 bg-[#0f2f4552] p-6 shadow-2xl shadow-[#17405940] backdrop-blur-md">
-        {/* Organization label intentionally hidden for now; keep data wiring for easy re-enable. */}
+        <div className="space-y-3">
+          <p className="text-sm font-medium uppercase tracking-[0.24em] text-[#fff3e2]/88">Welcome to</p>
+          <p className="text-[15px] leading-7 text-slate-100/88">{combinedOrganizationLabel}</p>
+        </div>
 
         <form className="mt-6 space-y-3" onSubmit={onSubmit}>
           <input

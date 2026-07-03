@@ -35,22 +35,23 @@ export default function FleetPage() {
 
     return APP_ROLES.includes(candidate as AppRole) ? (candidate as AppRole) : "management";
   });
-  const [demoUsername] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return window.sessionStorage.getItem("demoUsername") ?? "";
-  });
+  const [demoUsername, setDemoUsername] = useState<string>("");
 
   const getDisplayName = (username: string): string => {
     return username || "User";
   };
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    setDemoUsername(window.sessionStorage.getItem("demoUsername") ?? "");
+  }, []);
+
+  useEffect(() => {
     if (demoMode) return;
 
     async function init() {
       const supabase = getSupabaseBrowserClient();
-      
-      // Check sessionStorage first (from Users table login)
+
       const username = typeof window !== "undefined" ? window.sessionStorage.getItem("demoUsername") : null;
       if (username) {
         const { data: userRow } = await supabase
@@ -58,7 +59,7 @@ export default function FleetPage() {
           .select("id, full_name, tenant_id, UserName, UserType")
           .eq("UserName", username)
           .maybeSingle();
-        
+
         if (userRow) {
           const userProfile: UserProfile = {
             id: userRow.id,
@@ -71,8 +72,7 @@ export default function FleetPage() {
           return;
         }
       }
-      
-      // Fallback to Supabase Auth session
+
       const {
         data: { session },
       } = await supabase.auth.getSession();

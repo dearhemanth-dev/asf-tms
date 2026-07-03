@@ -34,12 +34,3 @@ body {
   background: linear-gradient(160deg, #0a1a31d9 0%, #10203bbd 100%);
   border: 1px solid #284667;
 }
-
-.desktop-scrollbar-hidden {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-.desktop-scrollbar-hidden::-webkit-scrollbar {
-  display: none;
-}

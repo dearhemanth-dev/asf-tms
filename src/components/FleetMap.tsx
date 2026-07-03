@@ -36,6 +36,8 @@ type FleetMapProps = {
   onBackgroundTap?: () => void;
   overlayContent?: ReactNode;
   className?: string;
+  fitPadding?: number;
+  fitMaxZoom?: number;
 };
 
 type OverlayPosition = {
@@ -56,6 +58,8 @@ type VehicleFeatureCollection = {
       id: string;
       truckNo: string;
       status: Vehicle["status"];
+      atHome: boolean;
+      mph?: number;
       selected: boolean;
       showLabel: boolean;
     };
@@ -63,7 +67,11 @@ type VehicleFeatureCollection = {
 };
 
 const VEHICLE_SOURCE_ID = "fleet-vehicles-source";
+const VEHICLE_GLOW_IDLE_LAYER_ID = "fleet-vehicles-glow-idle";
+const VEHICLE_GLOW_CRUISE_LAYER_ID = "fleet-vehicles-glow-cruise";
 const VEHICLE_DOT_LAYER_ID = "fleet-vehicles-dots";
+const VEHICLE_DOT_IDLE_CORE_LAYER_ID = "fleet-vehicles-dots-idle-core";
+const VEHICLE_DOT_CRUISE_CORE_LAYER_ID = "fleet-vehicles-dots-cruise-core";
 
 export default function FleetMap({
   vehicles,
@@ -73,11 +81,14 @@ export default function FleetMap({
   onBackgroundTap,
   overlayContent,
   className,
+  fitPadding = 60,
+  fitMaxZoom = 9,
 }: FleetMapProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const ignoreNextBackgroundTapRef = useRef(false);
+  const glowAnimationFrameRef = useRef<number | null>(null);
   const vehiclesByIdRef = useRef(new Map<string, Vehicle>());
   const labelMarkersRef = useRef<maplibregl.Marker[]>([]);
   const [overlayPosition, setOverlayPosition] = useState<OverlayPosition | null>(null);
@@ -87,12 +98,11 @@ export default function FleetMap({
       (vehicle) => typeof vehicle.longitude === "number" && typeof vehicle.latitude === "number"
     );
 
-    vehiclesByIdRef.current = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
-
     return {
       type: "FeatureCollection",
       features: mappedVehicles.map((vehicle) => {
         const isSelected = selectedId === vehicle.id;
+        const isHome = Boolean(vehicle.atHome);
         const totalVehicles = mappedVehicles.length;
         const showLabel =
           totalVehicles <= 40 ||
@@ -109,6 +119,8 @@ export default function FleetMap({
             id: vehicle.id,
             truckNo: vehicle.truckNo,
             status: vehicle.status,
+            atHome: isHome,
+            mph: vehicle.mph,
             selected: isSelected,
             showLabel,
           },
@@ -116,6 +128,10 @@ export default function FleetMap({
       }),
     };
   }, [selectedId, vehicles]);
+
+  useEffect(() => {
+    vehiclesByIdRef.current = new Map(vehicles.map((vehicle) => [vehicle.id, vehicle]));
+  }, [vehicles]);
 
   const updateOverlayPosition = useCallback(() => {
     const map = mapRef.current;
@@ -171,6 +187,10 @@ export default function FleetMap({
     mapRef.current.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
     return () => {
+      if (glowAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(glowAnimationFrameRef.current);
+        glowAnimationFrameRef.current = null;
+      }
       labelMarkersRef.current.forEach((marker) => marker.remove());
       labelMarkersRef.current = [];
       mapRef.current?.remove();
@@ -185,13 +205,71 @@ export default function FleetMap({
 
     const applyVehicleLayers = () => {
       const existingSource = map.getSource(VEHICLE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      const hasIdleGlowLayer = Boolean(map.getLayer(VEHICLE_GLOW_IDLE_LAYER_ID));
+      const hasCruiseGlowLayer = Boolean(map.getLayer(VEHICLE_GLOW_CRUISE_LAYER_ID));
       const hasDotLayer = Boolean(map.getLayer(VEHICLE_DOT_LAYER_ID));
+      const hasIdleCoreLayer = Boolean(map.getLayer(VEHICLE_DOT_IDLE_CORE_LAYER_ID));
+      const hasCruiseCoreLayer = Boolean(map.getLayer(VEHICLE_DOT_CRUISE_CORE_LAYER_ID));
 
       if (!existingSource) {
         map.addSource(VEHICLE_SOURCE_ID, {
           type: "geojson",
           data: vehicleFeatures,
         });
+      }
+
+      if (!hasIdleGlowLayer) {
+        map.addLayer({
+          id: VEHICLE_GLOW_IDLE_LAYER_ID,
+          type: "circle",
+          source: VEHICLE_SOURCE_ID,
+          filter: [
+            "all",
+            [">", ["coalesce", ["get", "mph"], 0], 0],
+            ["<", ["coalesce", ["get", "mph"], 0], 6],
+          ],
+          paint: {
+            "circle-color": "#f25c1d",
+            "circle-radius": 12,
+            "circle-opacity": 0.58,
+            "circle-blur": 0.35,
+            "circle-stroke-color": "#fb923c",
+            "circle-stroke-width": 1.6,
+            "circle-stroke-opacity": 0.88,
+          },
+        });
+      }
+
+      if (map.getLayer(VEHICLE_GLOW_IDLE_LAYER_ID)) {
+        map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-color", "#f25c1d");
+        map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-stroke-color", "#fb923c");
+      }
+
+      if (!hasCruiseGlowLayer) {
+        map.addLayer({
+          id: VEHICLE_GLOW_CRUISE_LAYER_ID,
+          type: "circle",
+          source: VEHICLE_SOURCE_ID,
+          filter: [
+            "all",
+            [">=", ["coalesce", ["get", "mph"], 0], 6],
+            ["<=", ["coalesce", ["get", "mph"], 0], 25],
+          ],
+          paint: {
+            "circle-color": "#facc15",
+            "circle-radius": 14,
+            "circle-opacity": 0.66,
+            "circle-blur": 0.4,
+            "circle-stroke-color": "#fef08a",
+            "circle-stroke-width": 1.8,
+            "circle-stroke-opacity": 0.96,
+          },
+        });
+      }
+
+      if (map.getLayer(VEHICLE_GLOW_CRUISE_LAYER_ID)) {
+        map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-color", "#facc15");
+        map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-stroke-color", "#fef08a");
       }
 
       if (!hasDotLayer) {
@@ -204,14 +282,67 @@ export default function FleetMap({
               "case",
               ["==", ["get", "status"], "alert"],
               "#ef4444",
-              ["==", ["get", "status"], "moving"],
-              "#10b981",
+              ["boolean", ["get", "atHome"], false],
               "#f59e0b",
+              ["<", ["coalesce", ["get", "mph"], 0], 6],
+              "#dcfce7",
+              ["<=", ["coalesce", ["get", "mph"], 0], 25],
+              "#34d399",
+              "#166534",
             ],
             "circle-radius": ["case", ["boolean", ["get", "selected"], false], 9, 7],
-            "circle-stroke-color": "#ffffff",
+            "circle-stroke-color": [
+              "case",
+              [
+                "all",
+                ["!=", ["get", "status"], "alert"],
+                ["!", ["boolean", ["get", "atHome"], false]],
+                ["==", ["coalesce", ["get", "mph"], 0], 0],
+              ],
+              "#6b7280",
+              "#ffffff",
+            ],
             "circle-stroke-width": 2,
             "circle-stroke-opacity": 1,
+          },
+        });
+
+        map.addLayer({
+          id: VEHICLE_DOT_CRUISE_CORE_LAYER_ID,
+          type: "circle",
+          source: VEHICLE_SOURCE_ID,
+          filter: [
+            "all",
+            [">=", ["coalesce", ["get", "mph"], 0], 6],
+            ["<=", ["coalesce", ["get", "mph"], 0], 25],
+            ["!=", ["get", "status"], "alert"],
+            ["!", ["boolean", ["get", "atHome"], false]],
+          ],
+          paint: {
+            "circle-color": "#15803d",
+            "circle-radius": ["case", ["boolean", ["get", "selected"], false], 5.3, 4.2],
+            "circle-stroke-color": "#ecfeff",
+            "circle-stroke-width": 1.2,
+            "circle-stroke-opacity": 1,
+            "circle-opacity": 1,
+          },
+        });
+
+        map.addLayer({
+          id: VEHICLE_DOT_IDLE_CORE_LAYER_ID,
+          type: "circle",
+          source: VEHICLE_SOURCE_ID,
+          filter: [
+            "all",
+            [">", ["coalesce", ["get", "mph"], 0], 0],
+            ["<", ["coalesce", ["get", "mph"], 0], 6],
+            ["!=", ["get", "status"], "alert"],
+            ["!", ["boolean", ["get", "atHome"], false]],
+          ],
+          paint: {
+            "circle-color": "#15803d",
+            "circle-radius": ["case", ["boolean", ["get", "selected"], false], 2.8, 2.2],
+            "circle-opacity": 1,
           },
         });
 
@@ -235,9 +366,104 @@ export default function FleetMap({
         };
 
         map.on("click", VEHICLE_DOT_LAYER_ID, selectVehicle);
+        map.on("click", VEHICLE_DOT_IDLE_CORE_LAYER_ID, selectVehicle);
+        map.on("click", VEHICLE_DOT_CRUISE_CORE_LAYER_ID, selectVehicle);
         map.on("mouseenter", VEHICLE_DOT_LAYER_ID, hoverVehicle);
+        map.on("mouseenter", VEHICLE_DOT_IDLE_CORE_LAYER_ID, hoverVehicle);
+        map.on("mouseenter", VEHICLE_DOT_CRUISE_CORE_LAYER_ID, hoverVehicle);
         map.on("mouseleave", VEHICLE_DOT_LAYER_ID, leaveVehicle);
+        map.on("mouseleave", VEHICLE_DOT_IDLE_CORE_LAYER_ID, leaveVehicle);
+        map.on("mouseleave", VEHICLE_DOT_CRUISE_CORE_LAYER_ID, leaveVehicle);
+      } else {
+        if (!hasIdleCoreLayer) {
+          map.addLayer({
+            id: VEHICLE_DOT_IDLE_CORE_LAYER_ID,
+            type: "circle",
+            source: VEHICLE_SOURCE_ID,
+            filter: [
+              "all",
+              [">", ["coalesce", ["get", "mph"], 0], 0],
+              ["<", ["coalesce", ["get", "mph"], 0], 6],
+              ["!=", ["get", "status"], "alert"],
+              ["!", ["boolean", ["get", "atHome"], false]],
+            ],
+            paint: {
+              "circle-color": "#15803d",
+              "circle-radius": ["case", ["boolean", ["get", "selected"], false], 2.8, 2.2],
+              "circle-opacity": 1,
+            },
+          });
+        }
+
+        if (!hasCruiseCoreLayer) {
+        map.addLayer({
+          id: VEHICLE_DOT_CRUISE_CORE_LAYER_ID,
+          type: "circle",
+          source: VEHICLE_SOURCE_ID,
+          filter: [
+            "all",
+            [">=", ["coalesce", ["get", "mph"], 0], 6],
+            ["<=", ["coalesce", ["get", "mph"], 0], 25],
+            ["!=", ["get", "status"], "alert"],
+            ["!", ["boolean", ["get", "atHome"], false]],
+          ],
+          paint: {
+            "circle-color": "#15803d",
+            "circle-radius": ["case", ["boolean", ["get", "selected"], false], 5.3, 4.2],
+            "circle-stroke-color": "#ecfeff",
+            "circle-stroke-width": 1.2,
+            "circle-stroke-opacity": 1,
+            "circle-opacity": 1,
+          },
+        });
+        }
       }
+
+      if (glowAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(glowAnimationFrameRef.current);
+        glowAnimationFrameRef.current = null;
+      }
+
+      const animateGlow = (time: number) => {
+        const hasAnyGlowLayer =
+          Boolean(map.getLayer(VEHICLE_GLOW_IDLE_LAYER_ID)) ||
+          Boolean(map.getLayer(VEHICLE_GLOW_CRUISE_LAYER_ID));
+        if (!hasAnyGlowLayer) return;
+
+        // Compact, clear ring-wave with slightly faster cadence and less overlap.
+        const cycle = (Math.sin(time / 200) + 1) / 2;
+        const idleRadius = 10 + cycle * 8;
+        const idleOpacity = 0.3 + cycle * 0.42;
+        const idleBlur = 0.2 + cycle * 0.26;
+        const idleStrokeOpacity = 0.62 + cycle * 0.3;
+        const idleStrokeWidth = 1.3 + cycle * 1.3;
+
+        const cruiseRadius = 11 + cycle * 10;
+        const cruiseOpacity = 0.48 + cycle * 0.42;
+        const cruiseBlur = 0.24 + cycle * 0.3;
+        const cruiseStrokeOpacity = 0.66 + cycle * 0.28;
+        const cruiseStrokeWidth = 1.4 + cycle * 1.5;
+
+        if (map.getLayer(VEHICLE_GLOW_IDLE_LAYER_ID)) {
+          map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-radius", idleRadius);
+          map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-opacity", idleOpacity);
+          map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-blur", idleBlur);
+          map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-stroke-opacity", idleStrokeOpacity);
+          map.setPaintProperty(VEHICLE_GLOW_IDLE_LAYER_ID, "circle-stroke-width", idleStrokeWidth);
+        }
+
+        if (map.getLayer(VEHICLE_GLOW_CRUISE_LAYER_ID)) {
+          map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-radius", cruiseRadius);
+          map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-opacity", cruiseOpacity);
+          map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-blur", cruiseBlur);
+          map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-stroke-opacity", cruiseStrokeOpacity);
+          map.setPaintProperty(VEHICLE_GLOW_CRUISE_LAYER_ID, "circle-stroke-width", cruiseStrokeWidth);
+        }
+
+        glowAnimationFrameRef.current = requestAnimationFrame(animateGlow);
+      };
+
+      glowAnimationFrameRef.current = requestAnimationFrame(animateGlow);
 
       (map.getSource(VEHICLE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(vehicleFeatures);
 
@@ -307,18 +533,28 @@ export default function FleetMap({
 
       const bounds = new LngLatBounds();
       vehicleFeatures.features.forEach((feature) => bounds.extend(feature.geometry.coordinates));
-      map.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 700 });
+      map.fitBounds(bounds, { padding: fitPadding, maxZoom: fitMaxZoom, duration: 700 });
     };
 
     if (!map.isStyleLoaded()) {
       map.once("load", applyVehicleLayers);
       return () => {
         map.off("load", applyVehicleLayers);
+        if (glowAnimationFrameRef.current !== null) {
+          cancelAnimationFrame(glowAnimationFrameRef.current);
+          glowAnimationFrameRef.current = null;
+        }
       };
     }
 
     applyVehicleLayers();
-  }, [onSelect, vehicleFeatures]);
+    return () => {
+      if (glowAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(glowAnimationFrameRef.current);
+        glowAnimationFrameRef.current = null;
+      }
+    };
+  }, [fitMaxZoom, fitPadding, onSelect, vehicleFeatures]);
 
   useEffect(() => {
     const map = mapRef.current;
