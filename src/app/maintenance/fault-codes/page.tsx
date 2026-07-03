@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import TopNav from "@/components/TopNav";
 import { APP_ROLES, type AppRole } from "@/lib/auth";
@@ -12,6 +12,7 @@ type UserProfile = {
   full_name: string;
   role: AppRole;
   tenant_id: string | null;
+  username?: string | null;
 };
 
 type FaultRecord = {
@@ -37,6 +38,16 @@ type WebhookMonitorResponse = {
   staleThresholdHours: number;
   lastReceivedAt: string | null;
   lastSuccessAt: string | null;
+  webhookConfig?: {
+    organizationCount: number;
+    webhookUrlCount: number;
+    webhookSecretCount: number;
+    configured: boolean;
+  };
+  signatureTotalsLast24h?: {
+    valid: number;
+    invalid: number;
+  };
   totalsLast24h: {
     received: number;
     inserted: number;
@@ -44,6 +55,109 @@ type WebhookMonitorResponse = {
     errors: number;
   };
   topEventTypes: Array<{ eventType: string; count: number }>;
+  fallbackActive?: boolean;
+  fallbackAlertCountLast24h?: number;
+  lastAlertAt?: string | null;
+  lastAlertSource?: string | null;
+  error?: string;
+};
+
+type BackfillAlertsResponse = {
+  ok?: boolean;
+  mode?: "dry-run" | "insert";
+  date?: string;
+  matchedVehicles?: number;
+  snapshotFallbackUsed?: boolean;
+  faultEntriesScanned?: number;
+  dtcRowsSeen?: number;
+  lightOnEntries?: number;
+  candidateAlerts?: number;
+  inserted?: number;
+  duplicates?: number;
+  errors?: number;
+  sourceErrors?: string[];
+  error?: string;
+};
+
+type ResetTestDataResponse = {
+  ok?: boolean;
+  deletedAlerts?: number;
+  deletedIngestionLogs?: number;
+  remainingAlerts?: number;
+  remainingIngestionLogs?: number;
+  error?: string;
+};
+
+type TestPushResponse = {
+  ok?: boolean;
+  attempted?: number;
+  sent?: number;
+  removed?: number;
+  staleRemoved?: number;
+  errors?: string[];
+  targets?: string[];
+  error?: string;
+};
+
+type SelfTestPushResponse = {
+  ok?: boolean;
+  tier?: "critical" | "warning" | "info";
+  attempted?: number;
+  sent?: number;
+  removed?: number;
+  errors?: string[];
+  error?: string;
+};
+
+type PushDiagnosticsResponse = {
+  ok?: boolean;
+  username?: string;
+  tenantId?: string | null;
+  subscriptionCount?: number;
+  error?: string;
+};
+
+type WebhookSettingsOrganization = {
+  id: string;
+  organizationName: string;
+  webhookUrl: string;
+  hasWebhookSecret: boolean;
+};
+
+type WebhookSettingsResponse = {
+  tenantId?: string | null;
+  organizations?: WebhookSettingsOrganization[];
+  error?: string;
+};
+
+type SimulateSamsaraResponse = {
+  ok?: boolean;
+  simulatedEventId?: string;
+  webhookStatus?: number;
+  webhookResult?: {
+    received?: number;
+    inserted?: number;
+    duplicates?: number;
+    errors?: number;
+    error?: string;
+  };
+  error?: string;
+};
+
+type PushActionAuditEntry = {
+  id: string;
+  username: string | null;
+  user_role: string | null;
+  action: string;
+  status: "success" | "failed" | "info";
+  options: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+type PushActionLogResponse = {
+  ok?: boolean;
+  rows?: PushActionAuditEntry[];
   error?: string;
 };
 
@@ -66,6 +180,11 @@ type AlertLevel = {
   label: string;
   action: string;
   className: string;
+};
+
+type DateTimeDisplay = {
+  locale?: string;
+  timeZone?: string;
 };
 
 type VehicleFaultView = {
@@ -110,6 +229,7 @@ type ComponentHealth = {
 
 type RepairAlertCard = {
   title: string;
+  timestamp: string;
   mechanicSpeak: string;
   managerSpeak: string;
   laborHours: string;
@@ -181,9 +301,34 @@ const DEALER_SEARCH_TERMS = [
 
 const REPAIR_CARD_PILOT_TRUCKS = new Set(["1133", "1146", "1137", "1141"]);
 
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; i += 1) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+
+  return outputArray;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function firstRecord(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const record = asRecord(entry);
+      if (record) return record;
+    }
+    return null;
+  }
+
+  return asRecord(value);
 }
 
 function asArray(value: unknown): unknown[] {
@@ -194,6 +339,25 @@ function toText(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function findVin(rawVehicle: Record<string, unknown>): string | null {
+  const candidates: unknown[] = [
+    rawVehicle.vin,
+    rawVehicle.VIN,
+    rawVehicle.vehicleVin,
+    rawVehicle.vehicle_vin,
+    asRecord(rawVehicle.vehicle)?.vin,
+    asRecord(rawVehicle.asset)?.vin,
+    asRecord(rawVehicle.meta)?.vin,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = toText(candidate).trim().toUpperCase();
+    if (normalized.length >= 8) return normalized;
+  }
+
+  return null;
 }
 
 function toList(value: unknown): unknown[] {
@@ -211,196 +375,55 @@ function toList(value: unknown): unknown[] {
   return [value];
 }
 
-function firstRecord(value: unknown): Record<string, unknown> | null {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const record = asRecord(item);
-      if (record) return record;
-    }
-    return null;
-  }
-
-  return asRecord(value);
-}
-
-function findVin(value: unknown, depth = 0): string | null {
-  if (depth > 4 || value === null || value === undefined) return null;
-
-  if (typeof value === "string") {
-    const normalized = value.trim().toUpperCase();
-    return /^[A-HJ-NPR-Z0-9]{17}$/.test(normalized) ? normalized : null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const candidate = findVin(item, depth + 1);
-      if (candidate) return candidate;
-    }
-    return null;
-  }
-
-  const record = asRecord(value);
-  if (!record) return null;
-
-  const preferredKeys = ["vin", "vehicleVin", "vehicleIdentificationNumber"];
-  for (const key of preferredKeys) {
-    if (record[key] !== undefined) {
-      const candidate = findVin(record[key], depth + 1);
-      if (candidate) return candidate;
-    }
-  }
-
-  for (const item of Object.values(record)) {
-    const candidate = findVin(item, depth + 1);
-    if (candidate) return candidate;
-  }
-
-  return null;
-}
-
-function extractVehicleProfile(rawVehicle: Record<string, unknown>, vehicleLabel: string): string {
-  const make = toText(findFirstValueByKeys(rawVehicle, ["make", "manufacturer", "oem"])) || "";
-  const model = toText(findFirstValueByKeys(rawVehicle, ["model", "modelName", "series"])) || "";
-  const year = toText(findFirstValueByKeys(rawVehicle, ["year", "modelYear"])) || "";
-
-  const profile = [year, make, model].filter((part) => part.trim().length > 0).join(" ").trim();
-  return profile || vehicleLabel;
-}
-
-function buildAssetVehicleProfile(asset: AssetVehicleMeta | null | undefined, fallback: string): string {
-  if (!asset) return fallback;
-
-  const profile = [asset.year, asset.make, asset.model]
-    .map((part) => (part ?? "").trim())
-    .filter((part) => part.length > 0)
-    .join(" ")
-    .trim();
-
-  return profile || fallback;
-}
-
-function summarizeManufacturerAssignedSpn(faults: FaultDetail[]): string {
-  const uniqueSpns = Array.from(new Set(faults.map((fault) => fault.spn.trim()).filter((spn) => spn && spn !== "-")));
-
-  if (uniqueSpns.length === 0) return "Unavailable";
-  if (uniqueSpns.length <= 3) return uniqueSpns.join(", ");
-  return `${uniqueSpns.slice(0, 3).join(", ")} +${uniqueSpns.length - 3} more`;
-}
-
-function getCardLookupKey(vehicleKey: string, card: RepairAlertCard): string {
-  return `${vehicleKey}|${card.title}|${card.source}`;
-}
-
-function getEstimateQualifier(confidence: "Low" | "Medium" | "High"): string {
-  if (confidence === "High") return "Verified";
-  return "Quote Needed";
-}
-
-function textToBullets(text: string): string[] {
-  const sentences = text
-    .split(/[\.;]\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  return sentences;
-}
-
-function formatPhoneNumber(phone: string | null): string {
-  if (!phone) return "Call store";
-  return phone;
-}
-
-function extractZipCode(value: unknown, depth = 0): string | null {
-  if (depth > 5 || value === null || value === undefined) return null;
-
-  if (typeof value === "string") {
-    const match = value.match(/\b(\d{5})(?:-\d{4})?\b/);
-    return match?.[1] ?? null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const candidate = extractZipCode(item, depth + 1);
-      if (candidate) return candidate;
-    }
-    return null;
-  }
-
-  const record = asRecord(value);
-  if (!record) return null;
-
-  const preferredKeys = ["zip", "zipcode", "postalCode", "postal_code"];
-  for (const key of preferredKeys) {
-    if (record[key] !== undefined) {
-      const candidate = extractZipCode(record[key], depth + 1);
-      if (candidate) return candidate;
-    }
-  }
-
-  for (const nestedValue of Object.values(record)) {
-    const candidate = extractZipCode(nestedValue, depth + 1);
-    if (candidate) return candidate;
-  }
-
-  return null;
-}
-
-function formatDistanceMiles(value: number): string {
-  return value < 10 ? `${value.toFixed(1)} mi` : `${Math.round(value).toLocaleString()} mi`;
-}
-
-function estimateProjectedParts(partsRange: string, index: number): string {
-  const match = partsRange.match(/\$(\d[\d,]*)\s*-\s*\$(\d[\d,]*)/);
-  if (!match) return partsRange;
-
-  const low = Number.parseInt(match[1].replace(/,/g, ""), 10);
-  const high = Number.parseInt(match[2].replace(/,/g, ""), 10);
-  if (!Number.isFinite(low) || !Number.isFinite(high) || high < low) return partsRange;
-
-  const tiers = [0, 0.03, 0.06, 0.08, 0.1];
-  const spread = tiers[index] ?? 0.1;
-  const adjustedLow = Math.max(0, Math.round(low * (1 - spread)));
-  const adjustedHigh = Math.max(adjustedLow, Math.round(high * (1 + spread)));
-  return `$${adjustedLow.toLocaleString()} - $${adjustedHigh.toLocaleString()}`;
-}
-
-function buildDealerViewBox(lat: number, lon: number): string {
-  const latSpan = 0.7;
-  const lonSpan = 0.7;
-  return `${(lon - lonSpan).toFixed(6)},${(lat + latSpan).toFixed(6)},${(lon + lonSpan).toFixed(6)},${(lat - latSpan).toFixed(6)}`;
-}
-
-function normalizeText(value: string | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function buildTip(tags: Record<string, string>, index: number): string {
-  const brand = (tags.brand ?? tags.name ?? "").toLowerCase();
-  if (brand.includes("napa")) return "Ask for fleet or commercial account pricing and check for core return charges.";
-  if (brand.includes("oreilly") || brand.includes("o'reilly")) return "Ask for online price matching and same-day pickup availability.";
-  if (brand.includes("advance")) return "Ask whether a pro account or store coupon can beat the shelf price.";
-  if (brand.includes("autozone")) return "Ask about commercial pricing and whether the part is stocked nearby.";
-  return [
-    "Ask for fleet, pro, or commercial pricing before you mention urgency.",
-    "Request online price match and confirm any core charge.",
-    "Have the VIN and part number ready before you call.",
-    "Ask about same-day pickup and return policy.",
-    "Check whether tax-exempt or account pricing applies.",
-  ][Math.min(index, 4)];
-}
-
 function haversineMiles(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
   const earthRadiusMiles = 3958.8;
 
   const deltaLat = toRadians(lat2 - lat1);
   const deltaLon = toRadians(lon2 - lon1);
   const a =
-    Math.sin(deltaLat / 2) ** 2 +
-    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(deltaLon / 2) ** 2;
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
 
   return earthRadiusMiles * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function normalizeText(value: unknown): string | null {
+  const text = toText(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function estimateProjectedParts(partsRange: string, index: number): string {
+  const parsed = parseUsdRange(partsRange);
+  if (!parsed) return partsRange;
+
+  const anchor = (parsed.low + parsed.high) / 2;
+  const spreadFactor = [0.92, 1, 1.08][index % 3];
+  const projection = Math.round(anchor * spreadFactor);
+  return `$${projection.toLocaleString()} target`;
+}
+
+function buildTip(
+  dealer: { name: string; brand?: string },
+  index: number
+): string {
+  const label = (dealer.brand ?? dealer.name).trim();
+  const tips = [
+    `Call ${label} first and confirm VIN-specific stock before dispatching a tech.`,
+    `Ask ${label} for same-day pickup window to reduce downtime.`,
+    `Request core-return and warranty details from ${label} before purchase.`,
+  ];
+  return tips[index % tips.length];
+}
+
+function buildDealerViewBox(lat: number, lon: number): string {
+  const latDelta = 1.1;
+  const lonDelta = 1.5;
+  const left = lon - lonDelta;
+  const right = lon + lonDelta;
+  const top = lat + latDelta;
+  const bottom = lat - latDelta;
+  return `${left},${top},${right},${bottom}`;
 }
 
 function normalizeNearbyDealerResult(
@@ -436,6 +459,33 @@ function normalizeNearbyDealerResult(
 
 function conciseFaultDescription(title: string): string {
   return title.includes(":") ? title.split(":").slice(1).join(":").trim() : title;
+}
+
+function summarizeManufacturerAssignedSpn(faults: FaultDetail[]): string {
+  const withDescriptions = faults
+    .map((fault) => `${fault.spn}${fault.spnDescription ? `: ${fault.spnDescription}` : ""}`.trim())
+    .filter((value) => value.length > 0);
+
+  if (withDescriptions.length === 0) return "SPN not available";
+  return withDescriptions.slice(0, 3).join(" | ");
+}
+
+function formatDistanceMiles(value: number): string {
+  if (!Number.isFinite(value)) return "Distance unavailable";
+  if (value < 1) return `${value.toFixed(1)} mi`;
+  if (value < 10) return `${value.toFixed(1)} mi`;
+  return `${Math.round(value)} mi`;
+}
+
+function formatPhoneNumber(phone: string | null): string {
+  const raw = (phone ?? "").trim();
+  if (raw.length === 0) return "Not available";
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  return raw;
 }
 
 function summarizeFaultCodes(faults: FaultDetail[]): string[] {
@@ -520,6 +570,25 @@ function buildPartEstimateLines(expectedParts: string[], partsRange: string): Pa
   });
 }
 
+function getCardLookupKey(vehicleKey: string, card: RepairAlertCard): string {
+  return `${vehicleKey}|${card.title}|${card.source}`;
+}
+
+function getEstimateQualifier(confidence: "Low" | "Medium" | "High"): string {
+  if (confidence === "High") return "Verified";
+  return "Quote Needed";
+}
+
+function textToBullets(value: string): string[] {
+  const normalized = value
+    .split(/\r?\n|•|\u2022|;/g)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (normalized.length > 0) return normalized;
+  return [value.trim()].filter((segment) => segment.length > 0);
+}
+
 function buildDealerTip(index: number): string {
   const tips = [
     "Ask for fleet, pro, or commercial pricing before you mention urgency.",
@@ -528,8 +597,32 @@ function buildDealerTip(index: number): string {
     "Ask for tax-exempt or account pricing if your company qualifies.",
     "If the price is close, ask about pickup timing and return policy.",
   ];
-
   return tips[Math.min(index, tips.length - 1)];
+}
+
+
+function extractVehicleProfile(rawVehicle: Record<string, unknown>, vehicleLabel: string): string {
+  const vehicle = asRecord(rawVehicle.vehicle);
+  const stats = asRecord(rawVehicle.stats);
+
+  const year = toText(vehicle?.year ?? rawVehicle.year ?? stats?.year).trim();
+  const make = toText(vehicle?.make ?? rawVehicle.make ?? stats?.make).trim();
+  const model = toText(vehicle?.model ?? rawVehicle.model ?? stats?.model).trim();
+
+  const profile = [year, make, model].filter((part) => part.length > 0).join(" ").trim();
+  return profile.length > 0 ? profile : vehicleLabel;
+}
+
+function buildAssetVehicleProfile(asset: AssetVehicleMeta | null, fallbackProfile: string): string {
+  if (!asset) return fallbackProfile;
+
+  const profile = [asset.year ?? "", asset.make ?? "", asset.model ?? ""]
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .join(" ")
+    .trim();
+
+  return profile.length > 0 ? profile : fallbackProfile;
 }
 
 function getNumericStat(value: unknown, depth = 0): number | null {
@@ -802,11 +895,33 @@ function normalizeFaultDetail(value: unknown): FaultDetail {
   };
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, display?: DateTimeDisplay): string {
   if (!value || value === "-") return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  try {
+    return new Intl.DateTimeFormat(display?.locale, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: display?.timeZone,
+    }).format(date);
+  } catch {
+    return date.toLocaleString(display?.locale);
+  }
+}
+
+function pickLatestTimestamp(currentValue: string, nextValue: string): string {
+  if (!nextValue || nextValue === "-") return currentValue;
+  if (!currentValue || currentValue === "-") return nextValue;
+
+  const currentDate = new Date(currentValue);
+  const nextDate = new Date(nextValue);
+  if (Number.isNaN(currentDate.getTime())) return nextValue;
+  if (Number.isNaN(nextDate.getTime())) return currentValue;
+  return nextDate.getTime() > currentDate.getTime() ? nextValue : currentValue;
 }
 
 function getDisplayName(username: string): string {
@@ -912,6 +1027,7 @@ type FaultSituation = {
   spnDescription: string;
   highestRank: number;
   count: number;
+  latestTimestamp: string;
   blob: string;
   variantMap: Map<string, { spn: string; fmi: string; fmiDescription: string; count: number }>;
 };
@@ -1025,6 +1141,7 @@ function toFaultSituations(faults: FaultDetail[]): FaultSituation[] {
         spnDescription: fault.spnDescription,
         highestRank: fault.alertRank,
         count: 1,
+        latestTimestamp: fault.timestamp,
         blob,
         variantMap,
       });
@@ -1033,6 +1150,7 @@ function toFaultSituations(faults: FaultDetail[]): FaultSituation[] {
 
     existing.count += 1;
     existing.highestRank = Math.max(existing.highestRank, fault.alertRank);
+    existing.latestTimestamp = pickLatestTimestamp(existing.latestTimestamp, fault.timestamp);
     if (existing.spnDescription === "-" && fault.spnDescription !== "-") existing.spnDescription = fault.spnDescription;
     existing.blob = `${existing.blob} ${blob}`;
 
@@ -1119,6 +1237,7 @@ function estimateRepairCard(situation: FaultSituation): RepairAlertCard {
 
   return {
     title: issueTitle,
+    timestamp: situation.latestTimestamp,
     mechanicSpeak: buildMechanicSpeak(situation, profile.mechanicAction),
     managerSpeak: `${profile.managerAction} ${situation.count > 1 ? `Observed ${situation.count} related events across recent reads.` : "One active event is currently present."}`,
     laborHours: profile.laborHours,
@@ -1181,6 +1300,10 @@ export default function MaintenanceFaultCodesPage() {
 
   const effectiveRole = demoMode ? demoRole : profile?.role;
   const effectiveName = demoMode ? getDisplayName(demoUsername) : profile?.full_name ?? "ASF User";
+  const effectiveUsername = (demoMode ? demoUsername : profile?.username ?? "").trim().toLowerCase();
+  const canUsePushTestControls = effectiveUsername === "hkmaintenance" || effectiveUsername === "skmaintenance";
+  const canUseWebhookControls = effectiveUsername === "hkmaintenance";
+  const canEnrollPushOnDevice = Boolean(effectiveUsername) && effectiveRole === "maintenance";
 
   const [loadingData, setLoadingData] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1208,6 +1331,134 @@ export default function MaintenanceFaultCodesPage() {
   const [dealerError, setDealerError] = useState<string | null>(null);
   const [webhookMonitor, setWebhookMonitor] = useState<WebhookMonitorResponse | null>(null);
   const [monitorError, setMonitorError] = useState<string | null>(null);
+  const [pushEnableLoading, setPushEnableLoading] = useState(false);
+  const [pushSendLoading, setPushSendLoading] = useState(false);
+  const [pushSelfTestLoading, setPushSelfTestLoading] = useState(false);
+  const [pushWorkflowLoading, setPushWorkflowLoading] = useState(false);
+  const [pushMessage, setPushMessage] = useState<string | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const [webhookSettingsLoading, setWebhookSettingsLoading] = useState(false);
+  const [webhookSettingsSaving, setWebhookSettingsSaving] = useState(false);
+  const [webhookSettingsError, setWebhookSettingsError] = useState<string | null>(null);
+  const [webhookSettingsMessage, setWebhookSettingsMessage] = useState<string | null>(null);
+  const [webhookSettingsOrgs, setWebhookSettingsOrgs] = useState<WebhookSettingsOrganization[]>([]);
+  const [selectedWebhookOrgId, setSelectedWebhookOrgId] = useState<string>("");
+  const [webhookUrlInput, setWebhookUrlInput] = useState<string>("");
+  const [webhookSecretInput, setWebhookSecretInput] = useState<string>("");
+  const [simulateSamsaraLoading, setSimulateSamsaraLoading] = useState(false);
+  const [pushAuditLoading, setPushAuditLoading] = useState(false);
+  const [pushAuditError, setPushAuditError] = useState<string | null>(null);
+  const [pushAuditRows, setPushAuditRows] = useState<PushActionAuditEntry[]>([]);
+  const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplay | null>(null);
+  const [activeRepairCardByVehicle, setActiveRepairCardByVehicle] = useState<Record<string, number>>({});
+  const [repairCardContentHeights, setRepairCardContentHeights] = useState<Record<string, number>>({});
+  const repairDeckTouchStartY = useRef<Record<string, number | null>>({});
+  const repairDeckWheelLockUntil = useRef<Record<string, number>>({});
+  const sortedVehicleKeysRef = useRef<string[]>([]);
+  const repairCardCountByVehicleRef = useRef<Record<string, number>>({});
+  const pushLoading = pushEnableLoading || pushSendLoading || pushSelfTestLoading || pushWorkflowLoading;
+
+  const setFocusedRepairCard = useCallback((vehicleKey: string, nextIndex: number, cardCount: number) => {
+    const maxIndex = Math.max(0, cardCount - 1);
+    const clampedIndex = Math.max(0, Math.min(nextIndex, maxIndex));
+
+    setActiveRepairCardByVehicle((prev) => {
+      if (prev[vehicleKey] === clampedIndex) return prev;
+      return { ...prev, [vehicleKey]: clampedIndex };
+    });
+  }, []);
+
+  const shiftFocusedRepairCard = useCallback(
+    (vehicleKey: string, direction: 1 | -1, cardCount: number) => {
+      const currentIndex = activeRepairCardByVehicle[vehicleKey] ?? 0;
+      const orderedVehicleKeys = sortedVehicleKeysRef.current;
+      const currentVehicleOrderIndex = orderedVehicleKeys.indexOf(vehicleKey);
+
+      if (direction === -1 && currentIndex <= 0) {
+        setFocusedRepairCard(vehicleKey, 0, cardCount);
+
+        if (currentVehicleOrderIndex < 0) {
+          setExpandedVehicleKey(null);
+          return;
+        }
+
+        const previousVehicleKey = orderedVehicleKeys[currentVehicleOrderIndex - 1] ?? null;
+
+        // Collapse current stack and hand off focus to the immediate previous header.
+        setExpandedVehicleKey(null);
+        if (previousVehicleKey) {
+          const previousCardCount = repairCardCountByVehicleRef.current[previousVehicleKey] ?? 0;
+          setFocusedRepairCard(previousVehicleKey, 0, previousCardCount);
+        }
+        return;
+      }
+
+      if (direction === 1) {
+        const maxIndex = Math.max(0, cardCount - 1);
+
+        if (currentIndex >= maxIndex) {
+          setFocusedRepairCard(vehicleKey, 0, cardCount);
+
+          if (currentVehicleOrderIndex < 0) {
+            setExpandedVehicleKey(null);
+            return;
+          }
+
+          const nextVehicleKey = orderedVehicleKeys[currentVehicleOrderIndex + 1] ?? null;
+
+          // Collapse current stack and move viewport focus to the next group header only.
+          setExpandedVehicleKey(null);
+          if (nextVehicleKey) {
+            const nextCardCount = repairCardCountByVehicleRef.current[nextVehicleKey] ?? 0;
+            setFocusedRepairCard(nextVehicleKey, 0, nextCardCount);
+          }
+          return;
+        }
+      }
+
+      setFocusedRepairCard(vehicleKey, currentIndex + direction, cardCount);
+    },
+    [activeRepairCardByVehicle, setFocusedRepairCard]
+  );
+
+  const onRepairDeckTouchStart = useCallback((vehicleKey: string, clientY: number) => {
+    repairDeckTouchStartY.current[vehicleKey] = clientY;
+  }, []);
+
+  const onRepairDeckTouchEnd = useCallback(
+    (vehicleKey: string, clientY: number, cardCount: number) => {
+      const startY = repairDeckTouchStartY.current[vehicleKey];
+      repairDeckTouchStartY.current[vehicleKey] = null;
+      if (startY === null || startY === undefined) return;
+
+      const deltaY = clientY - startY;
+      if (Math.abs(deltaY) < 40) return;
+
+      shiftFocusedRepairCard(vehicleKey, deltaY > 0 ? -1 : 1, cardCount);
+    },
+    [shiftFocusedRepairCard]
+  );
+
+  const onRepairDeckWheel = useCallback(
+    (vehicleKey: string, deltaY: number, cardCount: number) => {
+      if (Math.abs(deltaY) < 10) return;
+
+      const now = Date.now();
+      const lockUntil = repairDeckWheelLockUntil.current[vehicleKey] ?? 0;
+      if (now < lockUntil) return;
+
+      repairDeckWheelLockUntil.current[vehicleKey] = now + 360;
+      shiftFocusedRepairCard(vehicleKey, deltaY > 0 ? 1 : -1, cardCount);
+    },
+    [shiftFocusedRepairCard]
+  );
+
+  useEffect(() => {
+    setDateTimeDisplay({
+      locale: typeof navigator !== "undefined" ? navigator.language : undefined,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  }, []);
 
   useEffect(() => {
     if (demoMode) {
@@ -1218,8 +1469,24 @@ export default function MaintenanceFaultCodesPage() {
     async function init() {
       const supabase = getSupabaseBrowserClient();
 
-      const username = typeof window !== "undefined" ? window.sessionStorage.getItem("demoUsername") : null;
+      const cookieUsername =
+        typeof window !== "undefined"
+          ? (document.cookie
+              .split(";")
+              .map((part) => part.trim())
+              .find((part) => part.startsWith("asf_login="))
+              ?.split("=")[1] ?? "")
+          : "";
+      const username =
+        typeof window !== "undefined"
+          ? window.sessionStorage.getItem("demoUsername") ?? decodeURIComponent(cookieUsername)
+          : null;
+
       if (username) {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("demoUsername", username);
+        }
+
         const { data: userRow } = await supabase
           .from("Users")
           .select("id, full_name, tenant_id, UserName, UserType")
@@ -1232,6 +1499,7 @@ export default function MaintenanceFaultCodesPage() {
             full_name: userRow.full_name || username,
             role: userRow.UserType as AppRole,
             tenant_id: userRow.tenant_id,
+            username: userRow.UserName || username,
           };
           setProfile(userProfile);
           setLoadingProfile(false);
@@ -1318,6 +1586,415 @@ export default function MaintenanceFaultCodesPage() {
     }
   }
 
+  async function preparePushTestData(): Promise<string[]> {
+    const notes: string[] = [];
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    try {
+      const resetResponse = await fetch("/api/maintenance/reset-test-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hard: false }),
+      });
+
+      const resetData = (await resetResponse.json().catch(() => ({}))) as ResetTestDataResponse;
+      if (resetResponse.ok && !resetData.error) {
+        notes.push(
+          `Tenant cleanup: Alerts ${resetData.deletedAlerts ?? 0}, Logs ${resetData.deletedIngestionLogs ?? 0}.`
+        );
+      } else {
+        notes.push(`Tenant cleanup skipped: ${resetData.error ?? "Unauthorized or unavailable"}.`);
+      }
+    } catch (error) {
+      notes.push(`Tenant cleanup skipped: ${error instanceof Error ? error.message : "unexpected error"}.`);
+    }
+
+    try {
+      const backfillResponse = await fetch("/api/maintenance/backfill-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: today, dryRun: false }),
+      });
+
+      const backfillData = (await backfillResponse.json().catch(() => ({}))) as BackfillAlertsResponse;
+      if (backfillResponse.ok && !backfillData.error) {
+        notes.push(
+          `Backfill rows: Candidates ${backfillData.candidateAlerts ?? 0}, Inserted ${backfillData.inserted ?? 0}, Dup ${backfillData.duplicates ?? 0}.`
+        );
+      } else {
+        notes.push(`Backfill skipped: ${backfillData.error ?? "Unauthorized or unavailable"}.`);
+      }
+    } catch (error) {
+      notes.push(`Backfill skipped: ${error instanceof Error ? error.message : "unexpected error"}.`);
+    }
+
+    return notes;
+  }
+
+  async function logPushAction(
+    action: string,
+    status: "success" | "failed" | "info",
+    options?: Record<string, unknown>,
+    errorMessage?: string
+  ): Promise<void> {
+    try {
+      await fetch("/api/maintenance/push-action-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, status, options: options ?? {}, errorMessage }),
+      });
+    } catch {
+      // Do not block onboarding flow for telemetry failures.
+    }
+  }
+
+  async function enablePushAlerts(options?: { preserveStatus?: boolean }): Promise<boolean> {
+    const preserveStatus = options?.preserveStatus === true;
+    setPushEnableLoading(true);
+    if (!preserveStatus) {
+      setPushMessage(null);
+      setPushError(null);
+    }
+
+    try {
+      console.log("[Push] Starting push registration...");
+      await logPushAction("onboarding_enable_clicked", "info", {
+        preserveStatus,
+      });
+
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        console.error("[Push] Browser missing required APIs");
+        await logPushAction("onboarding_unsupported_browser", "failed", {
+          serviceWorker: "serviceWorker" in navigator,
+          pushManager: "PushManager" in window,
+          notification: "Notification" in window,
+        }, "This browser does not support push notifications.");
+        setPushError("This browser does not support push notifications.");
+        return false;
+      }
+
+      console.log("[Push] Browser APIs available");
+
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!vapidPublicKey) {
+        console.error("[Push] VAPID key missing");
+        await logPushAction("onboarding_missing_vapid_key", "failed", {}, "NEXT_PUBLIC_VAPID_PUBLIC_KEY missing.");
+        setPushError("Push key missing. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY in Vercel.");
+        return false;
+      }
+
+      console.log("[Push] VAPID key present");
+
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      console.log("[Push] Service Worker registered:", registration.scope);
+
+      const permission = await Notification.requestPermission();
+      console.log("[Push] Notification permission:", permission);
+      await logPushAction("onboarding_permission_result", permission === "granted" ? "success" : "failed", {
+        permission,
+      }, permission === "granted" ? undefined : "Notification permission denied.");
+
+      if (permission !== "granted") {
+        setPushError("Notification permission denied.");
+        return false;
+      }
+
+      let subscription = await registration.pushManager.getSubscription();
+      console.log("[Push] Existing subscription:", subscription ? "found" : "not found");
+
+      if (!subscription) {
+        console.log("[Push] Creating new subscription...");
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as unknown as BufferSource,
+        });
+        console.log("[Push] New subscription created, endpoint:", subscription.endpoint.substring(0, 50));
+      }
+
+      console.log("[Push] Sending subscription to server...");
+      const response = await fetch("/api/maintenance/register-device", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as { error?: string; ok?: boolean };
+      console.log("[Push] Server response:", response.status, data);
+
+      if (!response.ok || !data.ok) {
+        await logPushAction("onboarding_register_device_failed", "failed", {
+          responseStatus: response.status,
+        }, data.error ?? "Unable to register this device for push alerts.");
+        setPushError(data.error ?? "Unable to register this device for push alerts.");
+        return false;
+      }
+
+      console.log("[Push] Registration successful!");
+      await logPushAction("onboarding_register_device_success", "success", {
+        hasExistingSubscription: Boolean(subscription),
+      });
+      setPushMessage("Push alerts enabled for this device.");
+      return true;
+    } catch (error) {
+      console.error("[Push] Error:", error);
+      await logPushAction(
+        "onboarding_enable_exception",
+        "failed",
+        {},
+        error instanceof Error ? error.message : "Unable to enable push alerts."
+      );
+      setPushError(error instanceof Error ? error.message : "Unable to enable push alerts.");
+      return false;
+    } finally {
+      setPushEnableLoading(false);
+    }
+  }
+
+  async function sendTestPush(options?: { preserveStatus?: boolean }): Promise<TestPushResponse | null> {
+    const preserveStatus = options?.preserveStatus === true;
+    setPushSendLoading(true);
+    if (!preserveStatus) {
+      setPushMessage(null);
+      setPushError(null);
+    }
+
+    try {
+      const response = await fetch("/api/maintenance/test-push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as TestPushResponse;
+      if (!response.ok || data.error || !data.ok) {
+        setPushError(data.error ?? "Unable to send test push alert.");
+        return null;
+      }
+
+      setPushMessage(`Test push sent to ${data.sent ?? 0}/${data.attempted ?? 0} device(s).`);
+      return data;
+    } catch (error) {
+      setPushError(error instanceof Error ? error.message : "Unable to send test push alert.");
+      return null;
+    } finally {
+      setPushSendLoading(false);
+    }
+  }
+
+  async function sendSelfTestPush(tier: "critical" | "warning" | "info"): Promise<SelfTestPushResponse | null> {
+    setPushSelfTestLoading(true);
+    setPushMessage(null);
+    setPushError(null);
+
+    try {
+      const response = await fetch("/api/maintenance/test-push-self", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SelfTestPushResponse;
+      if (!response.ok || data.error || !data.ok) {
+        setPushError(data.error ?? "Unable to send self-test push alert.");
+        return null;
+      }
+
+      const tierLabel = tier === "critical" ? "Critical" : tier === "warning" ? "Pro+" : "Info";
+      setPushMessage(`${tierLabel} self-test push sent to ${data.sent ?? 0}/${data.attempted ?? 0} device(s).`);
+      return data;
+    } catch (error) {
+      setPushError(error instanceof Error ? error.message : "Unable to send self-test push alert.");
+      return null;
+    } finally {
+      setPushSelfTestLoading(false);
+    }
+  }
+
+  async function loadPushDiagnosticsSnapshot(): Promise<PushDiagnosticsResponse | null> {
+    try {
+      const response = await fetch("/api/maintenance/push-diagnostics", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as PushDiagnosticsResponse;
+      if (!response.ok) {
+        return { error: data.error ?? "Unable to load push diagnostics." };
+      }
+
+      return data;
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Unable to load push diagnostics." };
+    }
+  }
+
+  async function loadPushAuditLog() {
+    if (!canUseWebhookControls) return;
+
+    setPushAuditLoading(true);
+    setPushAuditError(null);
+
+    try {
+      const response = await fetch("/api/maintenance/push-action-log?limit=40", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as PushActionLogResponse;
+
+      if (!response.ok) {
+        setPushAuditRows([]);
+        setPushAuditError(data.error ?? "Unable to load push action audit log.");
+        return;
+      }
+
+      setPushAuditRows(data.rows ?? []);
+    } catch (error) {
+      setPushAuditRows([]);
+      setPushAuditError(error instanceof Error ? error.message : "Unable to load push action audit log.");
+    } finally {
+      setPushAuditLoading(false);
+    }
+  }
+
+  async function loadWebhookSettingsSnapshot() {
+    if (!canUseWebhookControls) return;
+
+    setWebhookSettingsLoading(true);
+    setWebhookSettingsError(null);
+
+    try {
+      const response = await fetch("/api/maintenance/webhook-settings", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as WebhookSettingsResponse;
+
+      if (!response.ok) {
+        setWebhookSettingsOrgs([]);
+        setWebhookSettingsError(data.error ?? "Unable to load webhook settings.");
+        return;
+      }
+
+      const organizations = data.organizations ?? [];
+      setWebhookSettingsOrgs(organizations);
+
+      if (organizations.length === 0) {
+        setSelectedWebhookOrgId("");
+        setWebhookUrlInput("");
+        return;
+      }
+
+      const preferredId =
+        organizations.find((org) => org.id === selectedWebhookOrgId)?.id ?? organizations[0].id;
+      setSelectedWebhookOrgId(preferredId);
+
+      const selected = organizations.find((org) => org.id === preferredId) ?? organizations[0];
+      setWebhookUrlInput(selected.webhookUrl ?? "");
+    } catch (error) {
+      setWebhookSettingsOrgs([]);
+      setWebhookSettingsError(error instanceof Error ? error.message : "Unable to load webhook settings.");
+    } finally {
+      setWebhookSettingsLoading(false);
+    }
+  }
+
+  async function saveWebhookSettings() {
+    if (!canUseWebhookControls) return;
+
+    setWebhookSettingsSaving(true);
+    setWebhookSettingsError(null);
+    setWebhookSettingsMessage(null);
+
+    try {
+      const payload: Record<string, string> = {};
+      if (selectedWebhookOrgId) payload.organizationId = selectedWebhookOrgId;
+      if (webhookUrlInput.trim()) payload.webhookUrl = webhookUrlInput.trim();
+      if (webhookSecretInput.trim()) payload.webhookSecret = webhookSecretInput.trim();
+
+      const response = await fetch("/api/maintenance/webhook-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setWebhookSettingsError(data.error ?? "Unable to save webhook settings.");
+        return;
+      }
+
+      setWebhookSecretInput("");
+      setWebhookSettingsMessage("Webhook settings saved. Trigger a Samsara test event and check signatures/alerts.");
+      await loadWebhookSettingsSnapshot();
+      await loadFaultCodes(true);
+    } catch (error) {
+      setWebhookSettingsError(error instanceof Error ? error.message : "Unable to save webhook settings.");
+    } finally {
+      setWebhookSettingsSaving(false);
+    }
+  }
+
+  async function simulateSamsaraTrigger() {
+    if (!canUseWebhookControls) return;
+
+    setSimulateSamsaraLoading(true);
+    setWebhookSettingsError(null);
+    setWebhookSettingsMessage(null);
+
+    try {
+      const response = await fetch("/api/maintenance/simulate-samsara", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as SimulateSamsaraResponse;
+      if (!response.ok || data.error || !data.ok) {
+        setWebhookSettingsError(data.error ?? `Simulation failed (status ${response.status}).`);
+        return;
+      }
+
+      setWebhookSettingsMessage(
+        `Simulation sent. Event ${data.simulatedEventId ?? "unknown"}. Webhook status ${data.webhookStatus ?? "n/a"}. ` +
+          `Inserted ${data.webhookResult?.inserted ?? 0}, Duplicates ${data.webhookResult?.duplicates ?? 0}, Errors ${data.webhookResult?.errors ?? 0}.`
+      );
+
+      await loadFaultCodes(true);
+      await loadWebhookSettingsSnapshot();
+    } catch (error) {
+      setWebhookSettingsError(error instanceof Error ? error.message : "Simulation failed.");
+    } finally {
+      setSimulateSamsaraLoading(false);
+    }
+  }
+
+  async function restartPushTestWorkflow() {
+    setPushWorkflowLoading(true);
+    setPushMessage(null);
+    setPushError(null);
+
+    try {
+      const prepNotes = await preparePushTestData();
+      const before = await loadPushDiagnosticsSnapshot();
+      const beforeCount = before?.subscriptionCount ?? 0;
+
+      const enabled = await enablePushAlerts({ preserveStatus: true });
+      if (!enabled) {
+        setPushMessage(`Push restart halted before send. ${prepNotes.join(" ")} Registered devices before start: ${beforeCount}.`);
+        return;
+      }
+
+      const sendResult = await sendTestPush({ preserveStatus: true });
+      const after = await loadPushDiagnosticsSnapshot();
+      const afterCount = after?.subscriptionCount ?? beforeCount;
+      await loadFaultCodes(true);
+
+      const targetCount = sendResult?.targets?.length ?? 0;
+      const deliverySummary = sendResult
+        ? `Push delivery: ${sendResult.sent ?? 0}/${sendResult.attempted ?? 0} endpoints${targetCount > 0 ? ` across ${targetCount} users` : ""}. Stale subscriptions cleaned: ${sendResult.staleRemoved ?? 0}.`
+        : "Push delivery did not return endpoint stats.";
+
+      if (sendResult?.ok) {
+        setPushMessage(`Push restart complete. ${prepNotes.join(" ")} ${deliverySummary} Tenant subscription rows before: ${beforeCount}. Tenant subscription rows now: ${afterCount}.`);
+      } else {
+        setPushMessage(`Push registration completed, but test send failed. ${prepNotes.join(" ")} ${deliverySummary} Tenant subscription rows before: ${beforeCount}. Tenant subscription rows now: ${afterCount}.`);
+      }
+    } finally {
+      setPushWorkflowLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (loadingProfile || effectiveRole !== "maintenance") return;
     void loadFaultCodes(false);
@@ -1355,6 +2032,25 @@ export default function MaintenanceFaultCodesPage() {
       cancelled = true;
     };
   }, [loadingProfile, effectiveRole, refreshing]);
+
+  useEffect(() => {
+    if (loadingProfile || effectiveRole !== "maintenance" || !canUseWebhookControls) return;
+    void loadWebhookSettingsSnapshot();
+  }, [loadingProfile, effectiveRole, canUseWebhookControls]);
+
+  useEffect(() => {
+    if (loadingProfile || effectiveRole !== "maintenance" || !canUseWebhookControls) return;
+    void loadPushAuditLog();
+  }, [loadingProfile, effectiveRole, canUseWebhookControls, refreshing]);
+
+  useEffect(() => {
+    const selected = webhookSettingsOrgs.find((org) => org.id === selectedWebhookOrgId);
+    if (selected) {
+      setWebhookUrlInput(selected.webhookUrl ?? "");
+      setWebhookSettingsMessage(null);
+      setWebhookSettingsError(null);
+    }
+  }, [selectedWebhookOrgId, webhookSettingsOrgs]);
 
   useEffect(() => {
     if (loadingProfile || effectiveRole !== "maintenance") return;
@@ -1533,7 +2229,11 @@ export default function MaintenanceFaultCodesPage() {
             ? `${lat.toFixed(4)}, ${lon.toFixed(4)}`
             : "Unknown location";
       const engineStateTime = toText(topEngineState?.time);
-      const lastSeen = gpsTime ? formatTime(gpsTime) : engineStateTime ? formatTime(engineStateTime) : "-";
+      const lastSeen = gpsTime
+        ? formatTime(gpsTime, dateTimeDisplay ?? undefined)
+        : engineStateTime
+          ? formatTime(engineStateTime, dateTimeDisplay ?? undefined)
+          : "-";
       const alertLevel = getTopAlertLevel(details, engineState);
 
       return {
@@ -1567,7 +2267,7 @@ export default function MaintenanceFaultCodesPage() {
         rawVehicle: row.rawVehicle,
       };
     });
-  }, [payload]);
+  }, [payload, dateTimeDisplay]);
 
   const totalFaults = useMemo(() => {
     return vehicles.reduce((sum, row) => sum + row.faultCount, 0);
@@ -1580,6 +2280,16 @@ export default function MaintenanceFaultCodesPage() {
       return bRank - aRank;
     });
   }, [vehicles]);
+
+  useEffect(() => {
+    sortedVehicleKeysRef.current = sortedVehicles.map((vehicle) => vehicle.vehicleKey);
+
+    const nextCounts: Record<string, number> = {};
+    for (const vehicle of sortedVehicles) {
+      nextCounts[vehicle.vehicleKey] = buildRepairAlertCards(vehicle.faults, { maxCards: 6 }).length;
+    }
+    repairCardCountByVehicleRef.current = nextCounts;
+  }, [sortedVehicles]);
 
   useEffect(() => {
     if (!expandedVehicleKey) return;
@@ -1683,7 +2393,7 @@ export default function MaintenanceFaultCodesPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-white">
-      <TopNav fullName={effectiveName} role="maintenance" compact />
+      <TopNav fullName={effectiveName} compact />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 md:px-6">
         <section className="rounded-2xl border border-slate-800 bg-slate-900/55 p-4 md:p-5">
@@ -1692,16 +2402,47 @@ export default function MaintenanceFaultCodesPage() {
               <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">Maintenance</p>
               <h1 className="mt-1 text-2xl font-black text-slate-100">Fault Codes</h1>
               <p className="mt-1 text-sm text-slate-300">Live vehicle fault-code feed from the connected fleet provider.</p>
+              <p className="mt-1 text-xs text-slate-400">
+                {canUsePushTestControls
+                  ? "Push testing users can run a single workflow action for quick validation."
+                  : "Enable push once on this phone. hkmaintenance can then run broadcast push tests to enrolled users."}
+              </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void loadFaultCodes(true)}
-              disabled={refreshing || loadingData}
-              className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {refreshing ? "Refreshing..." : "Refresh"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {canUsePushTestControls && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void restartPushTestWorkflow()}
+                    disabled={pushLoading || refreshing || loadingData}
+                    className="rounded-md border border-cyan-400/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {pushWorkflowLoading ? "Preparing + Restarting Push..." : "Restart Push Test"}
+                  </button>
+                </>
+              )}
+
+              {!canUsePushTestControls && canEnrollPushOnDevice && (
+                <button
+                  type="button"
+                  onClick={() => void enablePushAlerts()}
+                  disabled={pushLoading || refreshing || loadingData}
+                  className="rounded-md border border-sky-500/45 bg-sky-700/25 px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pushEnableLoading ? "Enabling Push..." : "Enable Push on This Phone"}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => void loadFaultCodes(true)}
+                disabled={refreshing || loadingData || pushLoading}
+                className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3">
@@ -1718,10 +2459,29 @@ export default function MaintenanceFaultCodesPage() {
               ) : (
                 <>
                   <p className={`mt-1 text-sm font-bold ${webhookMonitor.stale ? "text-amber-300" : "text-emerald-300"}`}>
-                    {webhookMonitor.stale ? "Stale" : "Receiving"}
+                    {webhookMonitor.stale
+                      ? webhookMonitor.fallbackActive
+                        ? "Stale (Fallback Active)"
+                        : "Stale"
+                      : "Receiving"}
+                  </p>
+                  {canUseWebhookControls && (
+                    <p className="mt-1 text-xs text-slate-300">
+                      Webhook config: {webhookMonitor.webhookConfig?.configured ? "Ready" : "Incomplete"}
+                      {webhookMonitor.webhookConfig
+                        ? ` | Org ${webhookMonitor.webhookConfig.organizationCount} | URL ${webhookMonitor.webhookConfig.webhookUrlCount} | Secret ${webhookMonitor.webhookConfig.webhookSecretCount}`
+                        : ""}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-slate-300">
+                    Last event: {webhookMonitor.lastReceivedAt ? formatTime(webhookMonitor.lastReceivedAt, dateTimeDisplay ?? undefined) : "No events yet"}
                   </p>
                   <p className="mt-1 text-xs text-slate-300">
-                    Last event: {webhookMonitor.lastReceivedAt ? new Date(webhookMonitor.lastReceivedAt).toLocaleString() : "No events yet"}
+                    Fallback alerts 24h: {webhookMonitor.fallbackAlertCountLast24h ?? 0}
+                    {webhookMonitor.lastAlertAt ? ` | Last alert: ${formatTime(webhookMonitor.lastAlertAt, dateTimeDisplay ?? undefined)}` : ""}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Signatures: {webhookMonitor.signatureTotalsLast24h?.valid ?? 0} valid / {webhookMonitor.signatureTotalsLast24h?.invalid ?? 0} invalid
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
                     Rx {webhookMonitor.totalsLast24h.received} | Inserted {webhookMonitor.totalsLast24h.inserted} | Dup {webhookMonitor.totalsLast24h.duplicates} | Err {webhookMonitor.totalsLast24h.errors}
@@ -1736,6 +2496,226 @@ export default function MaintenanceFaultCodesPage() {
             </article>
           </div>
 
+          {canEnrollPushOnDevice && (
+            <article className="mt-4 rounded-lg border border-sky-500/35 bg-slate-950/60 p-3">
+              <p className="text-xs uppercase tracking-wide text-sky-300">Steps to get registered for notification alerts on your phone</p>
+              <p className="mt-2 text-xs text-slate-300">
+                1) Open this page on your smartphone browser and allow notifications when prompted.
+              </p>
+              <p className="mt-1 text-xs text-slate-300">
+                2) Tap "Enable Push on This Phone" to register your device.
+              </p>
+              <p className="mt-1 text-xs text-slate-300">
+                3) Tap a self-test push below and confirm notification receipt + tap-to-open behavior.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Production policy stays focused on EngineFaultOn critical alerts. Warning/Info buttons are for onboarding demo only.
+              </p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void enablePushAlerts()}
+                  disabled={pushLoading || refreshing || loadingData}
+                  className="rounded-md border border-sky-500/45 bg-sky-700/25 px-3 py-2 text-xs font-semibold text-sky-100 hover:bg-sky-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pushEnableLoading ? "Enabling Push..." : "Enable Push on This Phone"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void sendSelfTestPush("critical")}
+                  disabled={pushLoading || refreshing || loadingData}
+                  className="rounded-md border border-rose-500/45 bg-rose-700/25 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pushSelfTestLoading ? "Sending..." : "Send My Critical Test"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void sendSelfTestPush("warning")}
+                  disabled={pushLoading || refreshing || loadingData}
+                  className="rounded-md border border-amber-500/45 bg-amber-700/25 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pushSelfTestLoading ? "Sending..." : "Send My Pro+ Demo"}
+                </button>
+              </div>
+            </article>
+          )}
+
+          {canUseWebhookControls && (
+            <article className="mt-4 rounded-lg border border-cyan-500/35 bg-slate-950/60 p-3">
+              {(() => {
+                const selectedOrg = webhookSettingsOrgs.find((org) => org.id === selectedWebhookOrgId) ?? webhookSettingsOrgs[0] ?? null;
+                const configReady = Boolean(selectedOrg?.webhookUrl?.trim()) && Boolean(selectedOrg?.hasWebhookSecret);
+                const validSignatures = webhookMonitor?.signatureTotalsLast24h?.valid ?? 0;
+                const insertedAlerts = webhookMonitor?.totalsLast24h.inserted ?? 0;
+                const verificationLabel = !configReady
+                  ? "NOT READY"
+                  : validSignatures > 0 && insertedAlerts > 0
+                    ? "VERIFIED"
+                    : "READY / WAITING FOR EVENT";
+
+                return (
+                  <p className={`mb-2 text-xs font-semibold uppercase tracking-wide ${verificationLabel === "VERIFIED" ? "text-emerald-300" : verificationLabel === "NOT READY" ? "text-rose-300" : "text-amber-300"}`}>
+                    Verification Status: {verificationLabel}
+                  </p>
+                );
+              })()}
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-cyan-300">Webhook Settings (hkmaintenance)</p>
+                <button
+                  type="button"
+                  onClick={() => void loadWebhookSettingsSnapshot()}
+                  disabled={webhookSettingsLoading || webhookSettingsSaving}
+                  className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-2 py-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {webhookSettingsLoading ? "Loading..." : "Reload"}
+                </button>
+              </div>
+
+              {webhookSettingsError && <p className="mt-2 text-xs text-rose-300">{webhookSettingsError}</p>}
+              {webhookSettingsMessage && <p className="mt-2 text-xs text-emerald-300">{webhookSettingsMessage}</p>}
+
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                <label className="text-xs text-slate-300">
+                  Organization
+                  <select
+                    value={selectedWebhookOrgId}
+                    onChange={(event) => setSelectedWebhookOrgId(event.target.value)}
+                    disabled={webhookSettingsLoading || webhookSettingsSaving || webhookSettingsOrgs.length === 0}
+                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-100"
+                  >
+                    {webhookSettingsOrgs.length === 0 ? (
+                      <option value="">No organization rows found</option>
+                    ) : (
+                      webhookSettingsOrgs.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.organizationName} {org.hasWebhookSecret ? "(secret set)" : "(missing secret)"}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+
+                <label className="text-xs text-slate-300">
+                  Webhook URL
+                  <input
+                    type="text"
+                    value={webhookUrlInput}
+                    onChange={(event) => setWebhookUrlInput(event.target.value)}
+                    placeholder="https://your-domain.com/api/webhooks/samsara"
+                    disabled={webhookSettingsLoading || webhookSettingsSaving}
+                    className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-100"
+                  />
+                </label>
+              </div>
+
+              <label className="mt-2 block text-xs text-slate-300">
+                Webhook Secret (leave blank to keep existing secret)
+                <input
+                  type="password"
+                  value={webhookSecretInput}
+                  onChange={(event) => setWebhookSecretInput(event.target.value)}
+                  placeholder="Paste secret from Samsara Webhooks page"
+                  disabled={webhookSettingsLoading || webhookSettingsSaving}
+                  className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-2 text-xs text-slate-100"
+                />
+              </label>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void saveWebhookSettings()}
+                  disabled={webhookSettingsLoading || webhookSettingsSaving || webhookSettingsOrgs.length === 0}
+                  className="rounded-md border border-emerald-500/45 bg-emerald-700/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {webhookSettingsSaving ? "Saving..." : "Save Webhook Settings"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void simulateSamsaraTrigger()}
+                  disabled={webhookSettingsLoading || webhookSettingsSaving || simulateSamsaraLoading || webhookSettingsOrgs.length === 0}
+                  className="rounded-md border border-amber-500/45 bg-amber-700/20 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {simulateSamsaraLoading ? "Simulating..." : "Simulate Real Samsara Event"}
+                </button>
+                <p className="text-[11px] text-slate-400">Save first, then send a Samsara test event.</p>
+              </div>
+
+              <div className="mt-3 rounded-md border border-slate-700 bg-slate-900/80 p-2 text-[11px] text-slate-300">
+                <p className="font-semibold text-slate-200">Step 3: Send a real Samsara trigger</p>
+                <p className="mt-1">In Samsara Dashboard, go to Settings, then Webhooks, open this webhook, click Test (Ping), and then trigger a real alert condition (for example Engine Fault On) on an assigned asset.</p>
+                <p className="mt-1">After each trigger, click Refresh on this page and confirm: Signatures valid increases, Webhook Health is Receiving, and a new alert appears for push delivery.</p>
+              </div>
+            </article>
+          )}
+
+          {canUseWebhookControls && (
+            <article className="mt-4 rounded-lg border border-fuchsia-500/35 bg-slate-950/60 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-fuchsia-300">Push Audit Viewer (hkmaintenance)</p>
+                <button
+                  type="button"
+                  onClick={() => void loadPushAuditLog()}
+                  disabled={pushAuditLoading}
+                  className="rounded-md border border-fuchsia-500/45 bg-fuchsia-700/25 px-2 py-1 text-xs font-semibold text-fuchsia-100 hover:bg-fuchsia-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pushAuditLoading ? "Loading..." : "Reload Logs"}
+                </button>
+              </div>
+
+              {pushAuditError && <p className="mt-2 text-xs text-rose-300">{pushAuditError}</p>}
+
+              {!pushAuditError && pushAuditRows.length === 0 ? (
+                <p className="mt-2 text-xs text-slate-300">No push action logs found yet.</p>
+              ) : (
+                <div className="mt-3 max-h-80 overflow-auto rounded-md border border-slate-700 bg-slate-900/80">
+                  <table className="min-w-full divide-y divide-slate-700 text-xs text-slate-200">
+                    <thead className="bg-slate-900 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-2 text-left font-semibold">Time</th>
+                        <th className="px-2 py-2 text-left font-semibold">User</th>
+                        <th className="px-2 py-2 text-left font-semibold">Action</th>
+                        <th className="px-2 py-2 text-left font-semibold">Status</th>
+                        <th className="px-2 py-2 text-left font-semibold">Options</th>
+                        <th className="px-2 py-2 text-left font-semibold">Error</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {pushAuditRows.map((row) => {
+                        const optionsText = row.options ? JSON.stringify(row.options) : "{}";
+                        const optionsPreview = optionsText.length > 120 ? `${optionsText.slice(0, 120)}...` : optionsText;
+                        const statusColor =
+                          row.status === "success"
+                            ? "text-emerald-300"
+                            : row.status === "failed"
+                              ? "text-rose-300"
+                              : "text-amber-200";
+
+                        return (
+                          <tr key={row.id}>
+                            <td className="px-2 py-2 align-top text-slate-300">
+                              {formatTime(row.created_at, dateTimeDisplay ?? undefined)}
+                            </td>
+                            <td className="px-2 py-2 align-top text-slate-200">
+                              {(row.username ?? "unknown").trim() || "unknown"}
+                            </td>
+                            <td className="px-2 py-2 align-top text-slate-200">{row.action}</td>
+                            <td className={`px-2 py-2 align-top font-semibold ${statusColor}`}>{row.status}</td>
+                            <td className="px-2 py-2 align-top text-slate-300" title={optionsText}>
+                              {optionsPreview}
+                            </td>
+                            <td className="px-2 py-2 align-top text-rose-200/90">{row.error_message ?? "-"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </article>
+          )}
+
           {payload?.guidance && (
             <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
               {payload.guidance}
@@ -1745,6 +2725,18 @@ export default function MaintenanceFaultCodesPage() {
           {errorMessage && (
             <div className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
               {errorMessage}
+            </div>
+          )}
+
+          {pushMessage && (
+            <div className="mt-4 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">
+              {pushMessage}
+            </div>
+          )}
+
+          {pushError && (
+            <div className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+              {pushError}
             </div>
           )}
 
@@ -1778,6 +2770,12 @@ export default function MaintenanceFaultCodesPage() {
                     ? `${vehicle.alertLevel.label}: ${vehicle.alertLevel.action}`
                     : `FAULTS DETECTED: Review ${vehicle.faultCount} active fault${vehicle.faultCount === 1 ? "" : "s"}.`
                   : "Live Health";
+                const activeCardIndex = activeRepairCardByVehicle[vehicle.vehicleKey] ?? 0;
+                const collapsedHeaderPx = 84;
+                const stackGapPx = 12;
+                const activeCard = pilotCards[activeCardIndex];
+                const activeCardKey = activeCard ? getCardLookupKey(vehicle.vehicleKey, activeCard) : null;
+                const activeCardHeight = activeCardKey ? repairCardContentHeights[activeCardKey] ?? 488 : 488;
 
                 return (
                 <article
@@ -1791,7 +2789,9 @@ export default function MaintenanceFaultCodesPage() {
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h2 className="text-base font-bold text-slate-100">{vehicle.vehicleLabel}</h2>
-                      <p className="text-xs text-slate-400">Last Seen: {vehicle.lastSeen}</p>
+                      <p className="text-xs text-slate-400" suppressHydrationWarning>
+                        Last Seen: {vehicle.lastSeen}
+                      </p>
                       <p className="text-xs text-slate-400 break-words">Location: {vehicle.lastSeenLocation}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -1815,7 +2815,15 @@ export default function MaintenanceFaultCodesPage() {
 
                   <button
                     type="button"
-                    onClick={() => setExpandedVehicleKey((prev) => (prev === vehicle.vehicleKey ? null : vehicle.vehicleKey))}
+                    onClick={() =>
+                      setExpandedVehicleKey((prev) => {
+                        const nextKey = prev === vehicle.vehicleKey ? null : vehicle.vehicleKey;
+                        if (nextKey) {
+                          setFocusedRepairCard(nextKey, 0, pilotCards.length);
+                        }
+                        return nextKey;
+                      })
+                    }
                     className={`mt-3 w-full rounded-xl border px-3 py-3 text-left transition ${
                       hasFaults
                         ? vehicle.alertLevel?.className ?? "border-amber-400/40 bg-amber-500/10 text-amber-100"
@@ -1831,7 +2839,22 @@ export default function MaintenanceFaultCodesPage() {
                   </button>
 
                   {isExpanded && hasFaults && pilotCards.length > 0 && (
-                    <div className="mt-3 space-y-2">
+                    <div className="mt-3">
+                      <div
+                        className="relative overflow-hidden"
+                        style={{
+                          height: `${Math.max(
+                            544,
+                            (activeCardIndex * collapsedHeaderPx) + activeCardHeight + 36
+                          )}px`,
+                          touchAction: "none",
+                          overscrollBehavior: "contain",
+                        }}
+                        onWheel={(event) => onRepairDeckWheel(vehicle.vehicleKey, event.deltaY, pilotCards.length)}
+                        onTouchStart={(event) => onRepairDeckTouchStart(vehicle.vehicleKey, event.touches[0]?.clientY ?? 0)}
+                        onTouchMove={(event) => event.preventDefault()}
+                        onTouchEnd={(event) => onRepairDeckTouchEnd(vehicle.vehicleKey, event.changedTouches[0]?.clientY ?? 0, pilotCards.length)}
+                      >
                       {pilotCards.map((card, idx) => {
                         const override = liveEstimateByCardKey[getCardLookupKey(vehicle.vehicleKey, card)];
                         const effectiveCard: RepairAlertCard = override
@@ -1850,16 +2873,66 @@ export default function MaintenanceFaultCodesPage() {
                         const operationsBullets = textToBullets(effectiveCard.managerSpeak);
                         const expectedParts = inferExpectedParts(effectiveCard.title);
                         const partEstimateLines = buildPartEstimateLines(expectedParts, effectiveCard.partsRange);
+                        const relativePosition = idx - activeCardIndex;
+                        const overlapPx = 28;
+                        const activeTop = activeCardIndex * (collapsedHeaderPx - stackGapPx);
+                        const translateY =
+                          relativePosition === 0
+                            ? activeTop
+                            : relativePosition > 0
+                              ? activeTop + (activeCardHeight - overlapPx) + (relativePosition - 1) * (collapsedHeaderPx - stackGapPx)
+                              : idx * (collapsedHeaderPx - stackGapPx);
+                        const isActiveCard = relativePosition === 0;
+                        const isCollapsedCard = !isActiveCard;
 
                         return (
-                        <div key={`${vehicle.vehicleKey}-repair-card-${idx}`} className="rounded-xl border border-cyan-500/35 bg-slate-900/75 p-3">
+                          <div
+                            key={`${vehicle.vehicleKey}-repair-card-${idx}`}
+                            data-repair-card-index={idx}
+                            onClick={() => {
+                              if (!isActiveCard) {
+                                setFocusedRepairCard(vehicle.vehicleKey, idx, pilotCards.length);
+                              }
+                            }}
+                            className="absolute left-0 right-0 top-0 cursor-pointer transition-all duration-[720ms] ease-[cubic-bezier(0.2,0.9,0.25,1)]"
+                            style={{
+                              transform: `translateY(${translateY}px) scale(${isActiveCard ? 1 : 0.995})`,
+                              zIndex: idx < activeCardIndex ? 200 + idx : isActiveCard ? 500 + idx : 800 + idx,
+                              opacity: 1,
+                              pointerEvents: "auto",
+                            }}
+                          >
+                        <div
+                          className={`rounded-xl border bg-slate-900/84 p-3 backdrop-blur-sm shadow-[0_18px_40px_-24px_rgba(8,145,178,0.75)] ${
+                            isActiveCard ? "border-cyan-300/70 ring-1 ring-cyan-300/45" : "border-cyan-500/35"
+                          }`}
+                          style={{
+                            height: isCollapsedCard ? `${collapsedHeaderPx}px` : "auto",
+                            overflowY: isCollapsedCard ? "hidden" : "visible",
+                          }}
+                          ref={(element) => {
+                            if (!element || !isActiveCard) return;
+
+                            const measuredHeight = Math.ceil(element.scrollHeight);
+                            const cardKey = getCardLookupKey(vehicle.vehicleKey, effectiveCard);
+                            setRepairCardContentHeights((prev) => {
+                              if (prev[cardKey] === measuredHeight) return prev;
+                              return { ...prev, [cardKey]: measuredHeight };
+                            });
+                          }}
+                        >
                           <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1">
-                              <p className="text-sm font-bold text-cyan-100">{effectiveCard.title}</p>
-                              <p className="mt-0.5 text-xs text-slate-400">{effectiveCard.source} • {effectiveCard.occurrenceCount} occurrence{effectiveCard.occurrenceCount !== 1 ? "s" : ""}</p>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-base font-bold leading-snug text-cyan-50 break-words">{effectiveCard.title}</p>
+                              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200" suppressHydrationWarning>
+                                {formatTime(effectiveCard.timestamp, dateTimeDisplay ?? undefined)}
+                              </p>
+                              <p className="mt-1 truncate text-[11px] text-slate-300">
+                                {effectiveCard.source} • {effectiveCard.occurrenceCount} occurrence{effectiveCard.occurrenceCount !== 1 ? "s" : ""}
+                              </p>
                             </div>
                             <span
-                              className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] whitespace-nowrap ${
+                              className={`flex-shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] whitespace-nowrap ${
                                 effectiveCard.urgency === "Immediate"
                                   ? "bg-rose-600/70 text-rose-50"
                                   : effectiveCard.urgency === "High"
@@ -1871,88 +2944,100 @@ export default function MaintenanceFaultCodesPage() {
                             </span>
                           </div>
 
-                          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                            <div>
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Technician Guidance</p>
-                              <ul className="mt-1 space-y-1 text-xs text-slate-100">
-                                {technicianBullets.map((bullet, i) => (
-                                  <li key={i} className="flex gap-2">
-                                    <span className="text-cyan-400 flex-shrink-0">•</span>
-                                    <span>{bullet}</span>
-                                  </li>
-                                ))}
-                              </ul>
+                          {isCollapsedCard ? (
+                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                              <span>Tap to focus</span>
+                              <span>{idx === activeCardIndex ? "Focused" : "Next card"}</span>
                             </div>
-                            <div>
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Operations Guidance</p>
-                              <ul className="mt-1 space-y-1 text-xs text-slate-100">
-                                {operationsBullets.map((bullet, i) => (
-                                  <li key={i} className="flex gap-2">
-                                    <span className="text-amber-400 flex-shrink-0">•</span>
-                                    <span>{bullet}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          </div>
+                          ) : (
+                            <div className="pb-8">
+                              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Technician Guidance</p>
+                                  <ul className="mt-1 space-y-1 text-xs text-slate-100">
+                                    {technicianBullets.map((bullet, i) => (
+                                      <li key={i} className="flex gap-2">
+                                        <span className="text-cyan-400 flex-shrink-0">•</span>
+                                        <span>{bullet}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Operations Guidance</p>
+                                  <ul className="mt-1 space-y-1 text-xs text-slate-100">
+                                    {operationsBullets.map((bullet, i) => (
+                                      <li key={i} className="flex gap-2">
+                                        <span className="text-amber-400 flex-shrink-0">•</span>
+                                        <span>{bullet}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
 
-                          <div className="mt-3">
-                            <div className="flex items-center justify-between">
-                              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                                Estimate ({estimateQualifier})
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setDealerModal({
-                                      vehicle,
-                                      cardTitle: effectiveCard.title,
-                                      partsRange: effectiveCard.partsRange,
-                                      confidence: estimateQualifier,
-                                      vin: resolvedVin,
-                                      vehicleProfile: resolvedVehicleProfile,
-                                      manufacturerAssignedSpn: summarizeManufacturerAssignedSpn(vehicle.faults),
-                                      faultDescription: conciseFaultDescription(effectiveCard.title),
-                                      faultCodes: summarizeFaultCodes(vehicle.faults),
-                                      expectedParts,
-                                    })
-                                  }
-                                  className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
-                                >
-                                  Dealer help
-                                </button>
+                              <div className="mt-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                                    Estimate ({estimateQualifier})
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDealerModal({
+                                          vehicle,
+                                          cardTitle: effectiveCard.title,
+                                          partsRange: effectiveCard.partsRange,
+                                          confidence: estimateQualifier,
+                                          vin: resolvedVin,
+                                          vehicleProfile: resolvedVehicleProfile,
+                                          manufacturerAssignedSpn: summarizeManufacturerAssignedSpn(vehicle.faults),
+                                          faultDescription: conciseFaultDescription(effectiveCard.title),
+                                          faultCodes: summarizeFaultCodes(vehicle.faults),
+                                          expectedParts,
+                                        })
+                                      }
+                                      className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-500/20"
+                                    >
+                                      Dealer help
+                                    </button>
+                                  </div>
+                                </div>
+                                <ul className="mt-1 space-y-1 text-xs text-slate-100">
+                                  <li className="flex gap-2">
+                                    <span className="text-cyan-400 flex-shrink-0">•</span>
+                                    <span>Labor: {effectiveCard.laborHours}</span>
+                                  </li>
+                                  <li className="flex gap-2">
+                                    <span className="text-cyan-400 flex-shrink-0">•</span>
+                                    <span>Parts budget: {effectiveCard.partsRange}</span>
+                                  </li>
+                                </ul>
+                                {partEstimateLines.length > 0 && (
+                                  <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-2">
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">Likely Parts Breakdown</p>
+                                    <ul className="mt-1 space-y-1 text-xs text-slate-200">
+                                      {partEstimateLines.map((line, lineIndex) => (
+                                        <li key={`${vehicle.vehicleKey}-part-line-${idx}-${lineIndex}`} className="flex items-start justify-between gap-3">
+                                          <span className="text-slate-100">{line.part}</span>
+                                          <span className="whitespace-nowrap text-cyan-200">{line.range}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                               </div>
                             </div>
-                            <ul className="mt-1 space-y-1 text-xs text-slate-100">
-                              <li className="flex gap-2">
-                                <span className="text-cyan-400 flex-shrink-0">•</span>
-                                <span>Labor: {effectiveCard.laborHours}</span>
-                              </li>
-                              <li className="flex gap-2">
-                                <span className="text-cyan-400 flex-shrink-0">•</span>
-                                <span>Parts budget: {effectiveCard.partsRange}</span>
-                              </li>
-                            </ul>
-                            {partEstimateLines.length > 0 && (
-                              <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-2">
-                                <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">Likely Parts Breakdown</p>
-                                <ul className="mt-1 space-y-1 text-xs text-slate-200">
-                                  {partEstimateLines.map((line, lineIndex) => (
-                                    <li key={`${vehicle.vehicleKey}-part-line-${idx}-${lineIndex}`} className="flex items-start justify-between gap-3">
-                                      <span className="text-slate-100">{line.part}</span>
-                                      <span className="whitespace-nowrap text-cyan-200">{line.range}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
+                          )}
 
 
                         </div>
-                      )})}
+                          </div>
+                        );
+                      })}
                     </div>
+                  </div>
                   )}
 
                   {isExpanded && !hasFaults && (
@@ -2010,7 +3095,9 @@ export default function MaintenanceFaultCodesPage() {
                                 <td className="px-2 py-2">{fault.fmi}</td>
                                 <td className="px-2 py-2">{fault.severity}</td>
                                 <td className="px-2 py-2">{fault.protocol}</td>
-                                <td className="px-2 py-2">{formatTime(fault.timestamp)}</td>
+                                <td className="px-2 py-2" suppressHydrationWarning>
+                                  {formatTime(fault.timestamp, dateTimeDisplay ?? undefined)}
+                                </td>
                                 <td className="px-2 py-2">{fault.description}</td>
                               </tr>
                             ))}
@@ -2218,4 +3305,9 @@ export default function MaintenanceFaultCodesPage() {
     </div>
   );
 }
+
+
+
+
+
 
