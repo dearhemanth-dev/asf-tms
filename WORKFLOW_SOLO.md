@@ -7,9 +7,11 @@
 
 ## Daily Start
 1. Open C:/Dev/asf-tms in VS Code.
-2. Run: git status --short
-3. Confirm branch: git rev-parse --abbrev-ref HEAD
-4. Pull latest: git pull --ff-only origin main
+2. Preferred: run startup guard script:
+   - powershell -ExecutionPolicy Bypass -File .\\scripts\\start-dev.ps1
+3. Run: git status --short
+4. Confirm branch: git rev-parse --abbrev-ref HEAD
+5. Pull latest: git pull --ff-only origin main
 
 ## During Development
 1. Work on main (solo mode).
