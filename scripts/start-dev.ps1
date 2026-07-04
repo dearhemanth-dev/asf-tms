@@ -19,15 +19,74 @@ if ($currentNorm -ine $canonicalNorm) {
 }
 
 Write-Host "Workspace OK: $currentNorm" -ForegroundColor Green
-Write-Host "Running startup checks..." -ForegroundColor Cyan
+Write-Host "Running mandatory startup gate..." -ForegroundColor Cyan
 
 $branch = git rev-parse --abbrev-ref HEAD
 Write-Host "Branch: $branch"
 
-git status --short
+if ($branch -ne "main") {
+  Write-Host "ERROR: You are not on main." -ForegroundColor Red
+  Write-Host "Current branch: $branch" -ForegroundColor Yellow
+  Write-Host "Switch to main or explicitly decide to use a feature branch before coding." -ForegroundColor Yellow
+  exit 3
+}
+
+$hooksPath = git config --get core.hooksPath
+if (-not $hooksPath) {
+  Write-Host "ERROR: core.hooksPath is not configured." -ForegroundColor Red
+  Write-Host "Run: powershell -ExecutionPolicy Bypass -File .\\scripts\\install-guards.ps1" -ForegroundColor Yellow
+  exit 4
+}
+
+Write-Host "Hooks path: $hooksPath"
+
+$preCommitPath = Join-Path $currentNorm "$hooksPath\\pre-commit"
+if (-not (Test-Path $preCommitPath)) {
+  Write-Host "ERROR: pre-commit hook is missing at $preCommitPath" -ForegroundColor Red
+  Write-Host "Run: powershell -ExecutionPolicy Bypass -File .\\scripts\\install-guards.ps1" -ForegroundColor Yellow
+  exit 5
+}
+
+Write-Host "Pre-commit hook: present" -ForegroundColor Green
+
+$shortStatus = git status --short
+if ($shortStatus) {
+  Write-Host "ERROR: Working tree is not clean." -ForegroundColor Red
+  Write-Host $shortStatus
+  Write-Host "Commit/stash/discard changes before starting a new coding session." -ForegroundColor Yellow
+  exit 6
+}
+
+Write-Host "Working tree: clean" -ForegroundColor Green
+
+Write-Host "Last check-in recap:" -ForegroundColor Cyan
+git show --no-patch --pretty=format:"  Commit: %h%n  Subject: %s%n  Date: %ci"
+Write-Host ""
+$headTags = git tag --points-at HEAD
+if ($headTags) {
+  Write-Host "  Tag(s): $headTags"
+} else {
+  Write-Host "  Tag(s): none on HEAD"
+}
 
 git pull --ff-only origin main
 
-git status --short
+Write-Host "Running quick verification build..." -ForegroundColor Cyan
+npm run build
 
-Write-Host "Startup checks complete. Repository is ready." -ForegroundColor Green
+Write-Host "Manual smoke checklist:" -ForegroundColor Cyan
+Write-Host "  1) npm run dev"
+Write-Host "  2) Verify login"
+Write-Host "  3) Verify /fleet"
+Write-Host "  4) Verify /reports"
+Write-Host "  5) Verify /maintenance/fault-codes"
+Write-Host "  6) Verify /fuel-expenses/report"
+Write-Host "  7) Confirm no blocking browser errors"
+
+$confirm = Read-Host "Type READY after manual smoke is done"
+if ($confirm -ne "READY") {
+  Write-Host "Startup gate incomplete. Session is NOT READY." -ForegroundColor Red
+  exit 7
+}
+
+Write-Host "Startup gate complete. Session is READY." -ForegroundColor Green

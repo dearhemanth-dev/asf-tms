@@ -7,11 +7,22 @@
 
 ## Daily Start
 1. Open C:/Dev/asf-tms in VS Code.
-2. Preferred: run startup guard script:
+2. Mandatory: run startup gate script:
    - powershell -ExecutionPolicy Bypass -File .\\scripts\\start-dev.ps1
-3. Run: git status --short
-4. Confirm branch: git rev-parse --abbrev-ref HEAD
-5. Pull latest: git pull --ff-only origin main
+3. Script enforces: canonical path, main branch, hook presence, clean tree, pull latest, quick build, and manual smoke acknowledgment.
+4. Only start feature coding after the script reports: Session is READY.
+
+## Mandatory Startup Gate
+The startup gate is required at the beginning of each new chat/session, including after reboot or VS Code restart.
+
+Pass criteria:
+1. Source of truth path is C:/Dev/asf-tms.
+2. Branch is main unless a branch is intentionally chosen.
+3. Managed pre-commit hook exists.
+4. Working tree is clean before new coding.
+5. Quick verification build passes.
+6. Manual smoke on login, /fleet, /reports, /maintenance/fault-codes, /fuel-expenses/report passes.
+7. User acknowledges READY.
 
 ## Hard Guard
 1. Install repo guard once in the canonical repo:
