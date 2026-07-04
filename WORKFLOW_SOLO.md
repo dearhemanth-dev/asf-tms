@@ -13,6 +13,18 @@
 4. Confirm branch: git rev-parse --abbrev-ref HEAD
 5. Pull latest: git pull --ff-only origin main
 
+## Hard Guard
+1. Install repo guard once in the canonical repo:
+   - powershell -ExecutionPolicy Bypass -File .\\scripts\\install-guards.ps1
+2. This activates a repo-managed pre-commit hook.
+3. The hook blocks commits if they are attempted from a non-canonical workspace path.
+
+## Assistant Operating Pattern
+1. At the start of each new coding chat/session, run the Daily Start checklist first.
+2. Before risky edits, create a checkpoint commit or tag.
+3. Before any deploy, capture rollback target first.
+4. After any meaningful milestone, commit before moving on.
+
 ## During Development
 1. Work on main (solo mode).
 2. Commit every logical milestone (30-90 minutes).

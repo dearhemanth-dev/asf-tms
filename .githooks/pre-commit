@@ -1,0 +1,15 @@
+#!/bin/sh
+
+top_level="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+case "$top_level" in
+  "C:/Dev/asf-tms"|"C:\\Dev\\asf-tms"|"/c/Dev/asf-tms"|"/C/Dev/asf-tms")
+    exit 0
+    ;;
+  *)
+    echo "ERROR: Commits are allowed only from canonical workspace."
+    echo "Current : $top_level"
+    echo "Expected: C:/Dev/asf-tms"
+    exit 1
+    ;;
+esac
