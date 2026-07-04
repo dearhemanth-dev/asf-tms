@@ -19,10 +19,26 @@ create index if not exists maintenance_push_action_logs_username_time_idx
 
 alter table public.maintenance_push_action_logs enable row level security;
 
-create policy "Tenant users can read own push action logs"
-  on public.maintenance_push_action_logs for select
-  using (tenant_id = current_setting('app.tenant_id', true)::uuid);
+do $$ begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'maintenance_push_action_logs'
+      and policyname = 'Tenant users can read own push action logs'
+  ) then
+    execute 'create policy "Tenant users can read own push action logs"
+      on public.maintenance_push_action_logs for select
+      using (tenant_id = current_setting(''app.tenant_id'', true)::uuid)';
+  end if;
+end $$;
 
-create policy "Service role can insert push action logs"
-  on public.maintenance_push_action_logs for insert
-  with check (true);
+do $$ begin
+  if not exists (
+    select 1 from pg_policies
+    where tablename = 'maintenance_push_action_logs'
+      and policyname = 'Service role can insert push action logs'
+  ) then
+    execute 'create policy "Service role can insert push action logs"
+      on public.maintenance_push_action_logs for insert
+      with check (true)';
+  end if;
+end $$;
