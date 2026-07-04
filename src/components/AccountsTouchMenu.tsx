@@ -29,13 +29,7 @@ const GROUPS: MenuGroup[] = [
       { label: "Lumper" },
       {
         label: "Repairs",
-        children: [
-          { label: "Parts" },
-          { label: "Labor" },
-          { label: "EMS reset" },
-          { label: "Repairs Report" },
-          { label: "Show Repair Report" },
-        ],
+        children: [{ label: "Parts" }, { label: "Labor" }, { label: "EMS reset" }],
       },
     ],
   },

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac, timingSafeEqual } from "crypto";
+import { pushConfigured, sendPushToTenant } from "@/lib/notifications/push";
+import { getHkMaintenancePhoneByTenant, sendSms, smsConfigured } from "@/lib/notifications/sms";
 
 const SAMSARA_SIGNATURE_HEADER = "x-samsara-signature";
 const WEBHOOK_PROVIDER = "samsara";
@@ -114,6 +116,24 @@ function toSignatureCandidates(signatureHeader: string): string[] {
   return [...candidates];
 }
 
+function toSecretKeyCandidates(secret: string): Buffer[] {
+  const normalized = secret.trim();
+  if (!normalized) return [];
+
+  const candidates = [Buffer.from(normalized, "utf8")];
+
+  try {
+    const decoded = Buffer.from(normalized, "base64");
+    if (decoded.length > 0 && decoded.toString("base64").replace(/=+$/g, "") === normalized.replace(/\s+/g, "").replace(/=+$/g, "")) {
+      candidates.push(decoded);
+    }
+  } catch {
+    // Fall back to the raw string candidate.
+  }
+
+  return candidates;
+}
+
 function canonicalizeEventType(rawType: string): CanonicalEventType {
   const normalized = rawType.trim().toLowerCase();
   return EVENT_ALIASES[normalized] ?? "Unknown";
@@ -142,8 +162,11 @@ function toReadableEventType(rawType: string, canonicalType: CanonicalEventType)
 function resolveTenantId(event: Record<string, unknown>, fallbackTenantId: string | null): string {
   const orgRecord = asRecord(event.organization);
   const externalIdsRecord = asRecord(orgRecord?.externalIds);
+  const tenantRecord = asRecord(event.tenant);
 
   const candidates = [
+    asString(tenantRecord?.id),
+    asString(event.tenant),
     asString(event.tenantId),
     asString(event.organizationId),
     asString(orgRecord?.id),
@@ -340,22 +363,29 @@ async function getWebhookSecrets() {
   return [...entries.values()];
 }
 
-function verifySignature(rawBody: string, signature: string, secret: string): boolean {
-  if (!signature || !secret) return false;
+function verifySignature(rawBody: string, timestamp: string, signature: string, secret: string): boolean {
+  if (!timestamp || !signature || !secret) return false;
   try {
     const signatures = toSignatureCandidates(signature);
     if (signatures.length === 0) return false;
 
-    const expectedHex = createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
-    const expectedBase64 = Buffer.from(expectedHex, "hex").toString("base64");
+    const secrets = toSecretKeyCandidates(secret);
+    if (secrets.length === 0) return false;
 
-    for (const actual of signatures) {
-      const candidates = [expectedHex, expectedBase64];
-      for (const expected of candidates) {
-        const actualBuf = Buffer.from(actual, "utf8");
-        const expectedBuf = Buffer.from(expected, "utf8");
-        if (actualBuf.length !== expectedBuf.length) continue;
-        if (timingSafeEqual(actualBuf, expectedBuf)) return true;
+    const message = `v1:${timestamp.trim()}:${rawBody}`;
+
+    for (const webhookSecret of secrets) {
+      const expectedHex = createHmac("sha256", webhookSecret).update(message, "utf8").digest("hex");
+      const expectedSignature = `v1=${expectedHex}`;
+
+      for (const actual of signatures) {
+        const candidates = [expectedSignature, expectedHex];
+        for (const expected of candidates) {
+          const actualBuf = Buffer.from(actual, "utf8");
+          const expectedBuf = Buffer.from(expected, "utf8");
+          if (actualBuf.length !== expectedBuf.length) continue;
+          if (timingSafeEqual(actualBuf, expectedBuf)) return true;
+        }
       }
     }
 
@@ -433,9 +463,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const rawBody = await request.text();
+  const timestamp = request.headers.get("x-samsara-timestamp") ?? request.headers.get("X-Samsara-Timestamp") ?? "";
   const signature = request.headers.get(SAMSARA_SIGNATURE_HEADER) ?? "";
 
-  const matchingSecret = secrets.find((entry) => verifySignature(rawBody, signature, entry.secret));
+  const matchingSecrets = secrets.filter((entry) => verifySignature(rawBody, timestamp, signature, entry.secret));
+  const matchingSecret = matchingSecrets.find((entry) => Boolean(entry.tenantId)) ?? matchingSecrets[0];
 
   if (!matchingSecret) {
     console.warn("[samsara-webhook] Signature verification failed");
@@ -465,8 +497,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const bodyRecord = asRecord(body);
   const nestedEvents = bodyRecord?.events;
+  const nestedData = bodyRecord?.data;
   const events: unknown[] = Array.isArray(nestedEvents)
     ? nestedEvents
+    : Array.isArray(nestedData)
+    ? nestedData
     : Array.isArray(body)
     ? (body as unknown[])
     : [body];
@@ -475,9 +510,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   let inserted = 0;
   let duplicates = 0;
   let eventErrors = 0;
+  const alertCandidates: Array<{ tenantId: string; vehicle: string; title: string; occurredAt: string }> = [];
 
   for (const raw of events) {
-    const event = asRecord(raw);
+    const eventRecord = asRecord(raw);
+    const nestedEvent = asRecord(eventRecord?.event);
+    const nestedPayload = asRecord(eventRecord?.payload);
+    const event = nestedEvent ?? nestedPayload ?? eventRecord;
     if (!event) continue;
 
     const rawEventType = asString(event.eventType ?? event.type);
@@ -488,8 +527,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const vehicleRec = asRecord(event.vehicle);
     const driverRec = asRecord(event.driver);
-    const tenantId = resolveTenantId(event, matchingSecret.tenantId);
-    const bucket = touchBucket(buckets, tenantId === "unknown" ? matchingSecret.tenantId : tenantId);
+    const resolvedTenantId = resolveTenantId(event, matchingSecret.tenantId);
+    const tenantId = resolvedTenantId === "unknown" ? matchingSecret.tenantId ?? "unknown" : resolvedTenantId;
+    const bucket = touchBucket(buckets, tenantId === "unknown" ? null : tenantId);
     bucket.receivedCount += 1;
     bucket.eventTypes.add(readableEventType);
 
@@ -545,6 +585,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     } else {
       inserted += 1;
       bucket.insertedCount += 1;
+      if (canonicalEventType === "EngineFaultOn" && severity === "critical") {
+        alertCandidates.push({
+          tenantId,
+          vehicle: asString(vehicleRec?.name ?? event.vehicleName) || "Unknown vehicle",
+          title,
+          occurredAt,
+        });
+      }
     }
   }
 
@@ -554,5 +602,78 @@ export async function POST(request: Request): Promise<NextResponse> {
     notes: undefined,
   });
 
+  if (alertCandidates.length > 0 && pushConfigured()) {
+    const pushByTenant = new Map<string, Array<{ vehicle: string; title: string; occurredAt: string }>>();
+
+    for (const candidate of alertCandidates) {
+      const tenantKey = candidate.tenantId && candidate.tenantId !== "unknown" ? candidate.tenantId : "__unknown__";
+      const current = pushByTenant.get(tenantKey) ?? [];
+      current.push({ vehicle: candidate.vehicle, title: candidate.title, occurredAt: candidate.occurredAt });
+      pushByTenant.set(tenantKey, current);
+    }
+
+    for (const [tenantKey, candidates] of pushByTenant) {
+      const tenantId = tenantKey === "__unknown__" ? null : tenantKey;
+            const preview = candidates
+        .slice(0, 3)
+        .map((candidate, index) => `${index + 1}. ${candidate.vehicle} - ${candidate.title}`)
+        .join(" || ");
+
+      const topCandidate = candidates[0];
+      const occurredAt = topCandidate?.occurredAt || new Date().toISOString();
+      const alertParams = new URLSearchParams({
+        severity: "critical",
+        title: `ASF TMS Critical Alert (${candidates.length})`,
+        vehicle: topCandidate?.vehicle ?? "Fleet vehicle",
+        fault: topCandidate?.title ?? "Critical maintenance fault detected",
+        summary: `Immediate attention required across ${candidates.length} critical event(s).`,
+        action: "Review active faults, contact driver, and dispatch maintenance response.",
+        occurredAt,
+        highlights: preview || "No additional fault highlights available",
+      });
+
+      const pushResult = await sendPushToTenant(
+        {
+          tenantId,
+        },
+        {
+          title: `ASF TMS Critical Alert (${candidates.length})`,
+          body: (topCandidate ? `${topCandidate.vehicle}: ${topCandidate.title}` : "New critical maintenance alert received.").slice(0, 160),
+          url: `/maintenance/alerts?${alertParams.toString()}`,
+          tag: "maintenance-critical-alert",
+        }
+      );
+
+      if (!pushResult.ok && pushResult.errors.length > 0) {
+        console.error("[samsara-webhook] Push send failed:", pushResult.errors[0]);
+      }
+    }
+  }
+
+  if (alertCandidates.length > 0 && smsConfigured()) {
+    const smsTenantId = alertCandidates.find((candidate) => candidate.tenantId && candidate.tenantId !== "unknown")?.tenantId;
+    const smsPhone = smsTenantId ? await getHkMaintenancePhoneByTenant(smsTenantId) : null;
+
+    if (!smsPhone) {
+      console.error("[samsara-webhook] SMS target unavailable: hkmaintenance phone not found for tenant");
+      return NextResponse.json({ received: events.length, inserted, duplicates, errors: eventErrors });
+    }
+
+    const preview = alertCandidates
+      .slice(0, 3)
+      .map((candidate, index) => `${index + 1}. ${candidate.vehicle} - ${candidate.title}`)
+      .join("\n");
+    const smsBody =
+      `ASF TMS Alert: ${alertCandidates.length} new EngineFaultOn event(s).\n` +
+      `${preview}\n` +
+      `Webhook: ${WEBHOOK_PROVIDER} ${new Date().toLocaleString()}`;
+
+    const smsResult = await sendSms(smsBody, smsPhone);
+    if (!smsResult.ok) {
+      console.error("[samsara-webhook] SMS send failed:", smsResult.error ?? "unknown error");
+    }
+  }
+
   return NextResponse.json({ received: events.length, inserted, duplicates, errors: eventErrors });
 }
+

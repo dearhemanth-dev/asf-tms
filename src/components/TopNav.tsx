@@ -12,6 +12,9 @@ type TopNavProps = {
   role?: AppRole;
   viewMode?: "map" | "list";
   onToggleViewMode?: () => void;
+  showMenu?: boolean;
+  backHref?: string;
+  backLabel?: string;
 };
 
 export default function TopNav({
@@ -20,6 +23,9 @@ export default function TopNav({
   role = "management",
   viewMode,
   onToggleViewMode,
+  showMenu = true,
+  backHref,
+  backLabel = "Back",
 }: TopNavProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -46,9 +52,7 @@ export default function TopNav({
     }
 
     if (role === "maintenance") {
-      return [
-        { href: "/maintenance/fault-codes", label: "Fault Codes" },
-      ];
+      return [{ href: "/maintenance/fault-codes", label: "Fault Codes" }];
     }
 
     if (role === "dispatch") {
@@ -84,13 +88,24 @@ export default function TopNav({
     <header className="sticky top-0 z-40 border-b border-cyan-900/40 bg-slate-950/85 backdrop-blur">
       <div className={`mx-auto flex w-full max-w-7xl items-center justify-between px-4 ${compact ? "py-2" : "py-3"}`}>
         <div className="relative flex items-center gap-2">
-          <button
-            onClick={() => setMenuOpen((prev) => !prev)}
-            className="rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-100 hover:bg-slate-800"
-            aria-label="Toggle menu"
-          >
-            ☰
-          </button>
+          {backHref ? (
+            <Link
+              href={backHref}
+              className="rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-100 hover:bg-slate-800"
+            >
+              {backLabel}
+            </Link>
+          ) : null}
+
+          {showMenu ? (
+            <button
+              onClick={() => setMenuOpen((prev) => !prev)}
+              className="rounded-md border border-slate-700 px-2.5 py-1.5 text-xs text-slate-100 hover:bg-slate-800"
+              aria-label="Toggle menu"
+            >
+              ☰
+            </button>
+          ) : null}
 
           {onToggleViewMode && viewMode && (
             <button
@@ -101,7 +116,7 @@ export default function TopNav({
             </button>
           )}
 
-          {menuOpen && (
+          {showMenu && menuOpen && (
             <div className="absolute left-0 top-10 z-50 min-w-52 rounded-lg border border-slate-700 bg-slate-900/95 p-1.5 shadow-2xl">
               {menuLinks.map((item) => (
                 <Link

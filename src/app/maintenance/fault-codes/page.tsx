@@ -2393,7 +2393,7 @@ export default function MaintenanceFaultCodesPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-white">
-      <TopNav fullName={effectiveName} compact />
+      <TopNav fullName={effectiveName} role={effectiveRole} compact showMenu={false} backHref="/fleet" backLabel="Back" />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 md:px-6">
         <section className="rounded-2xl border border-slate-800 bg-slate-900/55 p-4 md:p-5">

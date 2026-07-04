@@ -7,8 +7,6 @@ export type Vehicle = {
   id: string;
   truckNo: string;
   driver: string;
-  assetLabel?: string;
-  assetType?: string;
   location: string;
   status: "moving" | "idle" | "alert";
   atHome?: boolean;

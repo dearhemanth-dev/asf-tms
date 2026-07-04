@@ -5,26 +5,16 @@ import { useRouter } from "next/navigation";
 import TopNav from "@/components/TopNav";
 import FleetViewClient from "@/components/FleetViewClient";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
-import { APP_ROLES, type AppRole } from "@/lib/auth";
-
-type UserProfile = {
-  id: string;
-  full_name: string;
-  role: AppRole;
-  tenant_id: string | null;
-};
+import { APP_ROLES, type AppRole, type UserProfile } from "@/lib/auth";
 
 export default function FleetPage() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const demoMode =
-    process.env.NEXT_PUBLIC_FORCE_DEMO_FLEET === "true" ||
-    !supabaseUrl ||
-    !supabaseAnon ||
-    supabaseAnon.startsWith("your_");
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(!demoMode);
+  const [demoMode, setDemoMode] = useState(false);
+  const [modeReady, setModeReady] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [demoRole] = useState<AppRole>(() => {
     if (typeof window === "undefined") return "management";
@@ -41,38 +31,43 @@ export default function FleetPage() {
   });
 
   const getDisplayName = (username: string): string => {
-    return username || "User";
+    const value = username.trim();
+    if (!value) return "User";
+    if (value.length < 2) return value.toUpperCase();
+    return `${value.slice(0, 2).toUpperCase()}${value.slice(2)}`;
+  };
+
+  const toggleViewMode = () => {
+    setViewMode((current) => (current === "map" ? "list" : "map"));
   };
 
   useEffect(() => {
-    if (demoMode) return;
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const urlRole = new URLSearchParams(window.location.search).get("demoRole");
+    const sessionRole = window.sessionStorage.getItem("demoRole");
+    const shouldUseDemoMode =
+      process.env.NEXT_PUBLIC_FORCE_DEMO_FLEET === "true" ||
+      !supabaseUrl ||
+      !supabaseAnon ||
+      supabaseAnon.startsWith("your_") ||
+      Boolean(urlRole) ||
+      Boolean(sessionRole);
+
+    setDemoMode(shouldUseDemoMode);
+    setModeReady(true);
+    if (shouldUseDemoMode) {
+      setLoading(false);
+    }
+  }, [supabaseAnon, supabaseUrl]);
+
+  useEffect(() => {
+    if (!modeReady || demoMode) return;
 
     async function init() {
       const supabase = getSupabaseBrowserClient();
-      
-      // Check sessionStorage first (from Users table login)
-      const username = typeof window !== "undefined" ? window.sessionStorage.getItem("demoUsername") : null;
-      if (username) {
-        const { data: userRow } = await supabase
-          .from("Users")
-          .select("id, full_name, tenant_id, UserName, UserType")
-          .eq("UserName", username)
-          .maybeSingle();
-        
-        if (userRow) {
-          const userProfile: UserProfile = {
-            id: userRow.id,
-            full_name: userRow.full_name || username,
-            role: userRow.UserType as AppRole,
-            tenant_id: userRow.tenant_id,
-          };
-          setProfile(userProfile);
-          setLoading(false);
-          return;
-        }
-      }
-      
-      // Fallback to Supabase Auth session
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -113,7 +108,17 @@ export default function FleetPage() {
     }
 
     void init();
-  }, [demoMode, router]);
+  }, [demoMode, modeReady, router]);
+
+  useEffect(() => {
+    if (demoMode) {
+      setLoading(false);
+    }
+  }, [demoMode]);
+
+  if (!modeReady) {
+    return <main className="min-h-screen grid place-items-center text-slate-300">Loading fleet workspace...</main>;
+  }
 
   if (demoMode) {
     return (
@@ -121,12 +126,12 @@ export default function FleetPage() {
         <TopNav
           fullName={getDisplayName(demoUsername)}
           role={demoRole}
-          viewMode={viewMode}
-          onToggleViewMode={() => setViewMode((current) => (current === "map" ? "list" : "map"))}
           compact
+          viewMode={viewMode}
+          onToggleViewMode={toggleViewMode}
         />
         <main className="min-h-0 flex-1 text-white">
-          <FleetViewClient role={demoRole} viewMode={viewMode} immersive />
+          <FleetViewClient role={demoRole} immersive viewMode={viewMode} />
         </main>
       </div>
     );
@@ -145,12 +150,12 @@ export default function FleetPage() {
       <TopNav
         fullName={profile.full_name}
         role={profile.role}
-        viewMode={viewMode}
-        onToggleViewMode={() => setViewMode((current) => (current === "map" ? "list" : "map"))}
         compact
+        viewMode={viewMode}
+        onToggleViewMode={toggleViewMode}
       />
       <main className="min-h-0 flex-1 text-white">
-        <FleetViewClient role={profile.role} viewMode={viewMode} immersive />
+        <FleetViewClient role={profile.role} immersive viewMode={viewMode} />
       </main>
     </div>
   );

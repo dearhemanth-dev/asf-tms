@@ -59,6 +59,21 @@ function toDisplayName(value: string): string {
   return compact;
 }
 
+function isPlaceholderDriverName(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return true;
+
+  return (
+    normalized === "unassigned" ||
+    normalized.startsWith("unassigned") ||
+    normalized === "unknown" ||
+    normalized === "none" ||
+    normalized === "no driver" ||
+    normalized === "n/a" ||
+    normalized === "na"
+  );
+}
+
 function toAssetLabel(truckNo: string, assetType?: string): string {
   const unit = truckNo.trim();
   if (!unit) return truckNo;
@@ -184,10 +199,9 @@ function normalizeVehicle(
 
   const samsaraDriver = String((row.driverName as string | undefined) ?? (row.assignedDriver as string | undefined) ?? "").trim();
   const dbDriver = lookups.driverByUnit.get(unitKey) ?? "";
-  const resolvedDriver =
-    samsaraDriver && samsaraDriver.toLowerCase() !== "unassigned"
-      ? samsaraDriver
-      : dbDriver || "Unassigned";
+  const resolvedDriver = !isPlaceholderDriverName(samsaraDriver)
+    ? samsaraDriver
+    : dbDriver || `Driver ${rawTruckNo}`;
 
   return {
     id: `${sourcePrefix}${String(row.id ?? row.vehicleId ?? `samsara-${index}`)}`,

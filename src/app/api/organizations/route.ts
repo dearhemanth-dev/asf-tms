@@ -3,6 +3,7 @@ import { getAppSessionUser } from "@/lib/app-session";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 type CreateOrganizationBody = {
+  organizationId?: string;
   organizationName?: string;
   mcNumber?: string;
   usdotNumber?: string;
@@ -50,6 +51,87 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({ organizations: data ?? [] }, { status: 200 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unexpected error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const supabase = await getSupabaseServerClient();
+
+    const appUser = await getAppSessionUser(request);
+    if (!appUser?.tenantId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (appUser.role !== "management" && appUser.role !== "accounts") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const body = (await request.json()) as CreateOrganizationBody;
+
+    const { data: organizations, error: orgError } = await supabase
+      .from("organizations")
+      .select("id, organization_name")
+      .eq("tenant_id", appUser.tenantId)
+      .order("organization_name", { ascending: true });
+
+    if (orgError) {
+      return NextResponse.json({ error: orgError.message }, { status: 400 });
+    }
+
+    const organizationId = asOptionalString(body.organizationId);
+    const targetOrganizationId = organizationId || ((organizations ?? []).length === 1 ? organizations?.[0]?.id ?? null : null);
+
+    if (!targetOrganizationId) {
+      return NextResponse.json(
+        {
+          error: "organizationId is required when the tenant has more than one organization.",
+          organizations: organizations ?? [],
+        },
+        { status: 400 }
+      );
+    }
+
+    const payload = {
+      organization_name: asOptionalString(body.organizationName),
+      mc_number: asOptionalString(body.mcNumber),
+      usdot_number: asOptionalString(body.usdotNumber),
+      street_address: asOptionalString(body.streetAddress),
+      city: asOptionalString(body.city),
+      state_province: asOptionalString(body.stateProvince),
+      postal_code: asOptionalString(body.postalCode),
+      country: asOptionalString(body.country),
+      manager_name: asOptionalString(body.managerName),
+      phone: asOptionalString(body.phone),
+      email: asOptionalString(body.email),
+      website: asOptionalString(body.website),
+      ein: asOptionalString(body.ein),
+      scac: asOptionalString(body.scac),
+      samsara_api_key: asOptionalString(body.samsaraApiKey),
+      samsara_webhook_url: asOptionalString(body.samsaraWebhookUrl),
+      samsara_webhook_secret: asOptionalString(body.samsaraWebhookSecret),
+      fuelguru_fleet_id: asOptionalString(body.fuelguruFleetId),
+      notes: asOptionalString(body.notes),
+    };
+
+    const { data, error } = await supabase
+      .from("organizations")
+      .update(payload)
+      .eq("tenant_id", appUser.tenantId)
+      .eq("id", targetOrganizationId)
+      .select("id, organization_name, samsara_webhook_url, samsara_webhook_secret, samsara_api_key")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    return NextResponse.json({ organization: data }, { status: 200 });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unexpected error" },
