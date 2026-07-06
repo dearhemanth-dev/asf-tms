@@ -276,6 +276,7 @@ function generateEventRecords(
         total_idling_minutes: metrics.idling_minutes,
         engine_hours: Math.round(metrics.engine_minutes / 60),
         idle_percentage: Math.round(metrics.idling_ratio * 100),
+        location: "Rest area",
         description: `${metrics.idling_minutes} minutes idle (${Math.round(metrics.idling_ratio * 100)}% of active engine time)`,
       },
     });
@@ -299,6 +300,7 @@ function generateEventRecords(
       details: {
         fuel_level_percent: metrics.avg_fuel_level,
         events: metrics.low_fuel_events,
+        location: "Fuel station",
         description: `Fuel level dropped to ${Math.round(metrics.avg_fuel_level)}% (${metrics.low_fuel_events} alert(s))`,
       },
     });
@@ -322,6 +324,7 @@ function generateEventRecords(
       liters_consumed: metrics.fuel_consumed_liters,
       engine_hours: Math.round(metrics.engine_minutes / 60),
       consumption_rate_per_hour: Math.round((metrics.fuel_consumed_liters / (metrics.engine_minutes / 60)) * 10) / 10,
+      location: "Daily route",
       description: `${Math.round(metrics.fuel_consumed_liters)} L consumed (${Math.round((metrics.fuel_consumed_liters / (metrics.engine_minutes / 60)) * 10) / 10} L/hr)`,
     },
   });
@@ -347,6 +350,7 @@ function generateEventRecords(
           Math.floor(Math.random() * 3)
         ],
         severity: "medium",
+        location: "Fleet yard",
         description: `${metrics.dvir_defects_count} DVIR defect(s) reported`,
       },
     });
@@ -370,6 +374,7 @@ function generateEventRecords(
       details: {
         alert_count: metrics.maintenance_alerts_count,
         alert_type: "Scheduled service due",
+        location: "Service center",
         description: `${metrics.maintenance_alerts_count} maintenance alert(s)`,
       },
     });
@@ -394,6 +399,7 @@ function generateEventRecords(
         details: {
           fault_code: ["P0101", "P0107", "P0108"][i % 3],
           component: ["Mass Air Flow", "Manifold Absolute Pressure", "Engine Control"][i % 3],
+          location: ["I-5 North", "US-101", "Local streets"][i % 3],
           description: "Engine diagnostic fault code",
         },
       });
@@ -419,6 +425,7 @@ function generateEventRecords(
         event_count: metrics.high_temp_events,
         component: "Coolant system",
         temp_celsius: 105 + Math.floor(Math.random() * 10),
+        location: "Desert highway",
         description: `High coolant temperature (${metrics.high_temp_events} event(s))`,
       },
     });
@@ -443,6 +450,7 @@ function generateEventRecords(
         event_count: metrics.low_oil_events,
         component: "Engine oil",
         oil_level: "Low",
+        location: "On road",
         description: `Low oil pressure detected (${metrics.low_oil_events} event(s))`,
       },
     });
@@ -466,6 +474,7 @@ function generateEventRecords(
       details: {
         event_count: metrics.high_rpm_events,
         max_rpm: 2200 + Math.floor(Math.random() * 400),
+        location: "Hill climb",
         description: `Engine running at high RPM (${metrics.high_rpm_events} event(s))`,
       },
     });
@@ -489,6 +498,7 @@ function generateEventRecords(
       details: {
         event_count: metrics.high_load_events,
         load_percent: 85 + Math.floor(Math.random() * 15),
+        location: "Loaded route",
         description: `Engine load at high level (${metrics.high_load_events} event(s))`,
       },
     });
