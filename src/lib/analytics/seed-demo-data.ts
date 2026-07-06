@@ -447,7 +447,7 @@ function generateEventRecords(
   // Convert liters to gallons (1 liter = 0.264172 gallons)
   const litersConsumed = metrics.fuel_consumed_liters;
   const gallonsConsumed = Math.round(litersConsumed * 0.264172 * 100) / 100; // Round to 2 decimals
-  const gallonsPerHour = Math.round((litersConsumed / (metrics.engine_minutes / 60)) * 0.264172 * 10) / 10;
+  const engineHours = Math.round(metrics.engine_minutes / 60);
   
   events.push({
     tenant_id: tenantId,
@@ -465,11 +465,9 @@ function generateEventRecords(
     details: {
       liters_consumed: litersConsumed,
       gallons_consumed: gallonsConsumed,
-      engine_hours: Math.round(metrics.engine_minutes / 60),
-      consumption_rate_per_hour_gallons: gallonsPerHour,
-      consumption_rate_per_hour_liters: Math.round((litersConsumed / (metrics.engine_minutes / 60)) * 10) / 10,
+      engine_hours: engineHours,
       location: "Daily route",
-      description: `${gallonsConsumed} gal consumed (${gallonsPerHour} gal/hr)`,
+      description: `${gallonsConsumed} gal • ${engineHours}h engine runtime`,
     },
     latitude: fuelCoords.latitude,
     longitude: fuelCoords.longitude,

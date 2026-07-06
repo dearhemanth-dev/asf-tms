@@ -302,13 +302,6 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                       </span>
                     )}
                   </div>
-
-                  {/* Optional Coordinates (tooltip-like) - hidden on mobile, shown on hover */}
-                  {resolved && event.latitude && event.longitude && (
-                    <p className="text-[9px] text-slate-600 mt-1 opacity-60 hover:opacity-100 transition">
-                      {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
-                    </p>
-                  )}
                 </div>
               );
               })}
