@@ -376,16 +376,12 @@ function tierStyles(tier: DriverScoreRow["tier"]) {
 export default function DriverRankingPage() {
   const router = useRouter();
   const [session, setSession] = useState<SessionState>({ ready: false, role: null, username: null });
-  const [inspectorOpen, setInspectorOpen] = useState(false);
   const isHkManager = session.username === "hkmanager";
   const [windowDays, setWindowDays] = useState<TimeWindow>("30");
   const [infoOpen, setInfoOpen] = useState(false);
-  const [metricsOpen, setMetricsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [seedStatus, setSeedStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [seedMessage, setSeedMessage] = useState<string>("");
   const [vehicles, setVehicles] = useState<LiveVehicle[]>([]);
   const [faults, setFaults] = useState<FaultRecord[]>([]);
   const [driverDirectory, setDriverDirectory] = useState<DriverDirectoryRow[]>([]);
@@ -548,38 +544,7 @@ export default function DriverRankingPage() {
     }
   }
 
-  async function seedAnalyticsData() {
-    setSeedStatus("loading");
-    setSeedMessage("Seeding 7-day demo data...");
-    try {
-      const response = await fetch("/api/admin/analytics/seed-demo", {
-        method: "POST",
-      });
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        setSeedStatus("error");
-        setSeedMessage(result.error ?? "Failed to seed data");
-        return;
-      }
-
-      setSeedStatus("success");
-      setSeedMessage(
-        `✓ Seeded ${result.inserted} snapshots for ${result.drivers_seeded} drivers`
-      );
-      // Re-fetch analytics so the Scoring Pipeline reflects the new data
-      const analyticsRes = await fetch(`/api/analytics/driver-window?days=${windowDays}`, { cache: "no-store" });
-      if (analyticsRes.ok) {
-        const analyticsPayload = await analyticsRes.json() as { drivers?: AggregatedDriverMetrics[] };
-        setAnalyticsData(analyticsPayload.drivers ?? []);
-      }
-      setTimeout(() => setSeedStatus("idle"), 4000);
-    } catch (err) {
-      setSeedStatus("error");
-      setSeedMessage(String(err));
-    }
-  }
 
   async function loadEventsForDriver(driverId: string) {
     setExpandedEventsLoading(true);
@@ -636,26 +601,14 @@ export default function DriverRankingPage() {
             >
               DPI Help
             </button>
-            <button
-              onClick={() => setMetricsOpen(true)}
-              className="rounded-md border border-amber-700/70 bg-amber-950/30 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-900/35"
-            >
-              Driver Metrics
-            </button>
+
             <button
               onClick={refreshData}
               className="rounded-md border border-cyan-700/70 bg-cyan-950/30 px-3 py-1.5 text-xs font-medium text-cyan-100 hover:bg-cyan-900/40"
             >
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
-            {isHkManager ? (
-              <button
-                onClick={() => setInspectorOpen(true)}
-                className="rounded-md border border-violet-600/70 bg-violet-950/35 px-3 py-1.5 text-xs font-medium text-violet-200 hover:bg-violet-900/40"
-              >
-                Data Inspector
-              </button>
-            ) : null}
+
             <Link
               href="/reports/vehicle-ranking"
               className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
@@ -933,291 +886,6 @@ export default function DriverRankingPage() {
               Management usage: reward consistent top performers, coach monitor-tier drivers, and execute immediate
               intervention plans for low-score drivers.
             </p>
-          </div>
-        </div>
-      ) : null}
-
-      {metricsOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/75 p-3 backdrop-blur-sm md:items-center md:justify-center">
-          <div className="w-full max-w-5xl rounded-2xl border border-slate-700 bg-slate-900 p-4 md:p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-amber-100">Driver Metrics Snapshot</h2>
-              <button
-                onClick={() => setMetricsOpen(false)}
-                className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
-              >
-                Close
-              </button>
-            </div>
-
-            <p className="mt-2 text-xs text-slate-400">
-              Mobile-first numeric table view. Use this for fast, objective metric checks without sliders.
-            </p>
-
-            <div className="mt-4 grid gap-3 lg:grid-cols-2">
-              <section className="rounded-xl border border-slate-800 bg-slate-950/55 p-3">
-                <h3 className="text-sm font-semibold text-slate-100">Pillar Weights</h3>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="min-w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400">
-                        <th className="px-2 py-2 font-medium">Pillar</th>
-                        <th className="px-2 py-2 font-medium">Weight</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {PILLARS.map((pillar) => (
-                        <tr key={pillar.key} className="border-b border-slate-900 last:border-b-0">
-                          <td className="px-2 py-2 text-slate-200">{pillar.title}</td>
-                          <td className="px-2 py-2 font-medium text-amber-200">{pillar.weight}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-500">{weightedFormula}</p>
-              </section>
-
-              <section className="rounded-xl border border-slate-800 bg-slate-950/55 p-3">
-                <h3 className="text-sm font-semibold text-slate-100">Driver Numeric Metrics</h3>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="min-w-[760px] text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400">
-                        <th className="px-2 py-2 font-medium">Driver</th>
-                        <th className="px-2 py-2 font-medium">DPI</th>
-                        <th className="px-2 py-2 font-medium">Faults</th>
-                        <th className="px-2 py-2 font-medium">Alerts</th>
-                        <th className="px-2 py-2 font-medium">Speeding</th>
-                        <th className="px-2 py-2 font-medium">Idle %</th>
-                        <th className="px-2 py-2 font-medium">Fuel %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rankingRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="px-2 py-3 text-slate-400">
-                            No live driver metrics available.
-                          </td>
-                        </tr>
-                      ) : (
-                        rankingRows.map((row) => (
-                          <tr key={`metrics-${row.key}`} className="border-b border-slate-900 last:border-b-0">
-                            <td className="px-2 py-2 text-slate-100">{row.driver}</td>
-                            <td className="px-2 py-2 font-semibold text-cyan-100">{row.totalScore}</td>
-                            <td className="px-2 py-2 text-slate-200">{row.faultCount}</td>
-                            <td className="px-2 py-2 text-slate-200">{row.maintenanceAlertsCount}</td>
-                            <td className="px-2 py-2 text-slate-200">{row.speedingCount}</td>
-                            <td className="px-2 py-2 text-slate-200">{Math.round(row.idleRatio * 100)}%</td>
-                            <td className="px-2 py-2 text-slate-200">{row.avgFuelLevel === null ? "n/a" : `${Math.round(row.avgFuelLevel)}%`}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {inspectorOpen && isHkManager ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/80 p-3 backdrop-blur-sm md:items-center md:justify-center">
-          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl border border-violet-700/50 bg-slate-900 p-4 md:p-5">
-            <div className="flex shrink-0 items-center justify-between gap-2">
-              <div className="flex-1">
-                <h2 className="text-sm font-semibold text-violet-200">hkmanager — Data Inspector</h2>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <button
-                    onClick={seedAnalyticsData}
-                    disabled={seedStatus === "loading"}
-                    className="rounded-md border border-emerald-600/70 bg-emerald-950/35 px-2.5 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-50"
-                  >
-                    {seedStatus === "loading" ? "Seeding..." : "Seed 7-Day Demo"}
-                  </button>
-                  {seedMessage && (
-                    <p
-                      className={`text-[11px] ${
-                        seedStatus === "success" ? "text-emerald-300" : "text-rose-300"
-                      }`}
-                    >
-                      {seedMessage}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => setInspectorOpen(false)}
-                className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
-              >
-                Close
-              </button>
-            </div>
-            <p className="mt-1 shrink-0 text-[11px] text-violet-400">
-              Visible to hkmanager only. Raw payloads and pipeline debug.
-            </p>
-
-            <div className="mt-3 min-h-0 flex-1 overflow-y-auto space-y-4 pr-1">
-              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Vehicles ({vehicles.length} received)
-                </h3>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Source: /api/fleet/vehicles — driver name, location, status, fuel, speed per vehicle.
-                </p>
-                <div className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] md:grid-cols-2">
-                  {vehicles.slice(0, 10).map((v) => (
-                    <div key={v.id} className="rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1.5">
-                      <p className="font-semibold text-slate-100">{v.truckNo} — {v.driver || <span className="text-slate-500">no driver</span>}</p>
-                      <p className="text-slate-400">Status: {v.status} | MPH: {v.mph ?? "n/a"} | Fuel: {v.fuelLevel != null ? `${v.fuelLevel}%` : "n/a"}</p>
-                      <p className="text-slate-500 truncate">{v.location}</p>
-                    </div>
-                  ))}
-                  {vehicles.length > 10 ? (
-                    <p className="col-span-2 text-slate-500">...and {vehicles.length - 10} more</p>
-                  ) : null}
-                  {vehicles.length === 0 ? (
-                    <p className="col-span-2 text-rose-300">No vehicle data received.</p>
-                  ) : null}
-                </div>
-              </section>
-
-              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Fault/Stats Records ({faults.length} received)
-                </h3>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Source: /api/fleet/fault-codes — engine telemetry and fault codes per vehicle.
-                </p>
-                <div className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] md:grid-cols-2">
-                  {faults.slice(0, 8).map((f, i) => {
-                    const stats = f.stats ?? {};
-                    const engineMin = pickStat(stats, ["obdEngineSeconds"]);
-                    const idleMs = pickStat(stats, ["idlingDurationMilliseconds"]);
-                    const rpm = pickStat(stats, ["engineRpm"]);
-                    const load = pickStat(stats, ["engineLoadPercent"]);
-                    const coolantMc = pickStat(stats, ["engineCoolantTemperatureMilliC"]);
-                    return (
-                      <div key={i} className="rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1.5">
-                        <p className="font-semibold text-slate-100">
-                          {f.vehicleName ?? f.vehicleId ?? `Record ${i + 1}`}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          ID: {f.vehicleId?.substring(0, 16) || "—"} | Name: {f.vehicleName || "—"}
-                        </p>
-                        <p className="text-slate-400">
-                          Faults: {countFaultCodes(f.faultCodes)} |{" "}
-                          Eng: {engineMin !== null ? `${Math.round(engineMin / 60)}min` : "n/a"} |{" "}
-                          Idle: {idleMs !== null ? `${Math.round(idleMs / 60000)}min` : "n/a"}
-                        </p>
-                        <p className="text-slate-500">
-                          RPM: {rpm ?? "n/a"} | Load: {load != null ? `${load}%` : "n/a"} | Coolant: {coolantMc != null ? `${Math.round(coolantMc / 1000)}°C` : "n/a"}
-                        </p>
-                      </div>
-                    );
-                  })}
-                  {faults.length > 8 ? (
-                    <p className="col-span-2 text-slate-500">...and {faults.length - 8} more</p>
-                  ) : null}
-                  {faults.length === 0 ? (
-                    <p className="col-span-2 text-rose-300">No fault/stats records received.</p>
-                  ) : null}
-                </div>
-              </section>
-
-              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Driver Directory ({driverDirectory.length} entries)
-                </h3>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Source: /api/drivers — DB driver records with assigned truck unit.
-                </p>
-                <div className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] md:grid-cols-3">
-                  {driverDirectory.map((d, i) => (
-                    <div key={i} className="rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1.5">
-                      <p className="font-semibold text-slate-100">{d.fullName}</p>
-                      <p className="text-slate-400">Unit: {d.assignedTruckUnitNumber || <span className="text-slate-600">unassigned</span>}</p>
-                    </div>
-                  ))}
-                  {driverDirectory.length === 0 ? (
-                    <p className="col-span-3 text-rose-300">No driver directory entries.</p>
-                  ) : null}
-                </div>
-              </section>
-
-              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Debug: Data Flow & Accumulator State
-                </h3>
-                <div className="mt-2 space-y-1.5 text-[11px]">
-                  <p className="text-slate-400">
-                    Vehicles: {vehicles.length} | Faults: {faults.length} | Driver Directory: {driverDirectory.length}
-                  </p>
-                  <p className="text-slate-400">
-                    Scored Drivers: {rankingRows.length}
-                  </p>
-                  <div className="mt-2 rounded-md border border-slate-800 bg-slate-950/60 p-2">
-                    <p className="text-slate-300 font-medium mb-1">First 8 Drivers: Metric Breakdown (should vary by telemetry):</p>
-                    <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                      {rankingRows.slice(0, 8).map((row, i) => (
-                        <p key={i} className="text-slate-400 font-mono text-[10px]">
-                          {i + 1}. {row.driver} ({row.trucks[0]}): Speeding={row.speedingCount} Braking={row.harshBrakingCount} Accel={row.harshAccelCount} Faults={row.faultCount} Alerts={row.maintenanceAlertsCount} Idle%={Math.round(row.idleRatio * 100)} Fuel={row.avgFuelLevel != null ? `${Math.round(row.avgFuelLevel)}%` : "n/a"}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                <h3 className="text-xs font-semibold text-slate-200">
-                  Scoring Pipeline ({rankingRows.length} drivers scored)
-                </h3>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  Post-accumulation DPI scores. Check for name-merge, unit-mapping, and pillar issues.
-                </p>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="min-w-[640px] text-left text-[11px]">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-500">
-                        <th className="px-2 py-1.5">Driver</th>
-                        <th className="px-2 py-1.5">Trucks</th>
-                        <th className="px-2 py-1.5">DPI</th>
-                        <th className="px-2 py-1.5">Safety</th>
-                        <th className="px-2 py-1.5">Idle</th>
-                        <th className="px-2 py-1.5">Fuel</th>
-                        <th className="px-2 py-1.5">DVIR</th>
-                        <th className="px-2 py-1.5">Maint</th>
-                        <th className="px-2 py-1.5">Faults</th>
-                        <th className="px-2 py-1.5">Alerts</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rankingRows.map((row) => (
-                        <tr key={`insp-${row.key}`} className="border-b border-slate-900 last:border-b-0 hover:bg-slate-900/60">
-                          <td className="px-2 py-1.5 text-slate-100">{row.driver}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{row.trucks.join(", ")}</td>
-                          <td className="px-2 py-1.5 font-semibold text-cyan-200">{row.totalScore}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.safety)}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.idling)}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.fuel)}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.dvir)}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.maintenance)}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{row.faultCount}</td>
-                          <td className="px-2 py-1.5 text-slate-300">{row.maintenanceAlertsCount}</td>
-                        </tr>
-                      ))}
-                      {rankingRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={10} className="px-2 py-3 text-rose-300">No scored rows — check accumulator pipeline.</td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            </div>
           </div>
         </div>
       ) : null}
