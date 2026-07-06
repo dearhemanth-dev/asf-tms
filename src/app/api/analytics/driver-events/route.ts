@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from("driver_analytics_events")
       .select(
-        "id, driver_id, truck_unit_number, event_date, event_timestamp, event_type, metric_value, event_count, duration_minutes, data_source, source_id, status, details, created_at"
+        "id, driver_id, truck_unit_number, event_date, event_timestamp, event_type, metric_value, event_count, duration_minutes, data_source, source_id, status, details, latitude, longitude, created_at"
       )
       .eq("tenant_id", tenantId)
       .eq("driver_id", driverId)

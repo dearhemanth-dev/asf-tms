@@ -266,6 +266,13 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     </p>
                   )}
 
+                  {/* GPS Coordinates */}
+                  {event.latitude && event.longitude && (
+                    <p className="text-[10px] text-slate-500 mb-1">
+                      <span className="font-medium">GPS:</span> {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
+                    </p>
+                  )}
+
                   {/* Speed */}
                   {event.details.speed && (
                     <p className="text-[10px] text-slate-400 mb-1">

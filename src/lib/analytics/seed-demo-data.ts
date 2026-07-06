@@ -59,7 +59,124 @@ type EventPayload = {
   source_id: string | null;
   status: string;
   details: Record<string, unknown> | null;
+  latitude: number | null;
+  longitude: number | null;
 };
+
+/**
+ * GPS Coordinate Reference System
+ * Realistic waypoints for North American truck corridors
+ * Format: { name, lat, lon, region }
+ */
+const ROUTE_WAYPOINTS = [
+  // I-5 Corridor (West Coast: CA, OR, WA, BC)
+  { name: "Los Angeles, CA", lat: 34.0522, lon: -118.2437, region: "I-5-CA" },
+  { name: "Bakersfield, CA", lat: 35.3733, lon: -119.0187, region: "I-5-CA" },
+  { name: "Fresno, CA", lat: 36.7469, lon: -119.7726, region: "I-5-CA" },
+  { name: "Stockton, CA", lat: 37.9577, lon: -121.2911, region: "I-5-CA" },
+  { name: "Sacramento, CA", lat: 38.5816, lon: -121.4944, region: "I-5-CA" },
+  { name: "Red Bluff, CA", lat: 40.1737, lon: -121.2353, region: "I-5-CA" },
+  { name: "Salem, OR", lat: 44.9429, lon: -123.3351, region: "I-5-OR" },
+  { name: "Portland, OR", lat: 45.5152, lon: -122.6784, region: "I-5-OR" },
+  { name: "Seattle, WA", lat: 47.6062, lon: -122.3321, region: "I-5-WA" },
+  { name: "Bellingham, WA", lat: 48.7519, lon: -122.4787, region: "I-5-WA" },
+  { name: "Vancouver, BC", lat: 49.2827, lon: -123.1207, region: "I-5-BC" },
+  
+  // I-80 Corridor (Cross-country: CA, NV, UT, WY, NE, IA, IL)
+  { name: "San Francisco Bay, CA", lat: 37.5483, lon: -121.9886, region: "I-80-CA" },
+  { name: "Sacramento, CA", lat: 38.5816, lon: -121.4944, region: "I-80-CA" },
+  { name: "Reno, NV", lat: 39.5296, lon: -119.8138, region: "I-80-NV" },
+  { name: "Salt Lake City, UT", lat: 40.7608, lon: -111.8910, region: "I-80-UT" },
+  { name: "Cheyenne, WY", lat: 41.1400, lon: -104.8202, region: "I-80-WY" },
+  { name: "Omaha, NE", lat: 41.2565, lon: -95.9345, region: "I-80-NE" },
+  { name: "Des Moines, IA", lat: 41.5868, lon: -93.6250, region: "I-80-IA" },
+  { name: "Chicago, IL", lat: 41.8781, lon: -87.6298, region: "I-80-IL" },
+  
+  // I-40 Corridor (Southern route: CA, AZ, NM, TX, OK, AR, TN, NC)
+  { name: "Barstow, CA", lat: 34.8926, lon: -117.0235, region: "I-40-CA" },
+  { name: "Flagstaff, AZ", lat: 35.1945, lon: -111.6553, region: "I-40-AZ" },
+  { name: "Albuquerque, NM", lat: 35.0844, lon: -106.6504, region: "I-40-NM" },
+  { name: "Amarillo, TX", lat: 35.3733, lon: -101.5337, region: "I-40-TX" },
+  { name: "Oklahoma City, OK", lat: 35.4676, lon: -97.5164, region: "I-40-OK" },
+  { name: "Memphis, TN", lat: 35.1264, lon: -90.0043, region: "I-40-TN" },
+  { name: "Asheville, NC", lat: 35.5951, lon: -82.5515, region: "I-40-NC" },
+  
+  // I-10 Corridor (Southern: CA, AZ, NM, TX, LA, MS, AL, FL)
+  { name: "Los Angeles, CA", lat: 34.0522, lon: -118.2437, region: "I-10-CA" },
+  { name: "Phoenix, AZ", lat: 33.4484, lon: -112.0742, region: "I-10-AZ" },
+  { name: "Tucson, AZ", lat: 32.2226, lon: -110.9747, region: "I-10-AZ" },
+  { name: "El Paso, TX", lat: 31.7619, lon: -106.4850, region: "I-10-TX" },
+  { name: "San Antonio, TX", lat: 29.4241, lon: -98.4936, region: "I-10-TX" },
+  { name: "Houston, TX", lat: 29.7604, lon: -95.3698, region: "I-10-TX" },
+  { name: "Lafayette, LA", lat: 30.2345, lon: -92.0198, region: "I-10-LA" },
+  { name: "New Orleans, LA", lat: 29.9511, lon: -90.2623, region: "I-10-LA" },
+  { name: "Mobile, AL", lat: 30.6954, lon: -88.0399, region: "I-10-AL" },
+  { name: "Jacksonville, FL", lat: 30.3322, lon: -81.6557, region: "I-10-FL" },
+  
+  // CA-99 (Central Valley)
+  { name: "Bakersfield, CA", lat: 35.3733, lon: -119.0187, region: "CA-99" },
+  { name: "Fresno, CA", lat: 36.7469, lon: -119.7726, region: "CA-99" },
+  { name: "Visalia, CA", lat: 36.1699, lon: -119.2881, region: "CA-99" },
+  
+  // US-101 (Pacific Coast)
+  { name: "San Diego, CA", lat: 32.7157, lon: -117.1611, region: "US-101-CA" },
+  { name: "Los Angeles, CA", lat: 34.0522, lon: -118.2437, region: "US-101-CA" },
+  { name: "San Francisco, CA", lat: 37.7749, lon: -122.4194, region: "US-101-CA" },
+  { name: "Portland, OR", lat: 45.5152, lon: -122.6784, region: "US-101-OR" },
+  { name: "Seattle, WA", lat: 47.6062, lon: -122.3321, region: "US-101-WA" },
+  
+  // Mexico Corridors (Northern Border & Baja)
+  { name: "Tijuana, Mexico", lat: 32.5149, lon: -117.0382, region: "MEX-BORDER" },
+  { name: "Ensenada, Mexico", lat: 31.8585, lon: -116.6168, region: "MEX-BAJA" },
+  { name: "Mexicali, Mexico", lat: 32.6392, lon: -115.4526, region: "MEX-BORDER" },
+  { name: "Hermosillo, Mexico", lat: 29.0729, lon: -110.9559, region: "MEX-SONORA" },
+  { name: "Ciudad Juárez, Mexico", lat: 31.7356, lon: -106.4888, region: "MEX-BORDER" },
+  { name: "Nuevo Laredo, Mexico", lat: 27.4369, lon: -99.5305, region: "MEX-BORDER" },
+  { name: "Monterrey, Mexico", lat: 25.6866, lon: -100.3161, region: "MEX-NORTE" },
+  
+  // Canada Corridors (BC, AB, ON)
+  { name: "Vancouver, BC", lat: 49.2827, lon: -123.1207, region: "CAN-BC" },
+  { name: "Calgary, AB", lat: 51.0447, lon: -114.0719, region: "CAN-AB" },
+  { name: "Edmonton, AB", lat: 53.5461, lon: -113.4938, region: "CAN-AB" },
+  { name: "Toronto, ON", lat: 43.6532, lon: -79.3832, region: "CAN-ON" },
+  
+  // Additional major hubs
+  { name: "Denver, CO", lat: 39.7392, lon: -104.9903, region: "HUB" },
+  { name: "Kansas City, MO", lat: 39.0997, lon: -94.5786, region: "HUB" },
+  { name: "Dallas, TX", lat: 32.7767, lon: -96.7970, region: "HUB" },
+  { name: "Atlanta, GA", lat: 33.7490, lon: -84.3880, region: "HUB" },
+];
+
+/**
+ * Helper: Get realistic GPS coordinates based on seeded randomness
+ * Ensures deterministic but varied coordinates per event
+ */
+function getEventCoordinates(
+  eventType: string,
+  driverId: string,
+  dayOffset: number,
+  eventIndex: number
+): { latitude: number; longitude: number } {
+  // Use driver ID and day to seed coordinate selection
+  const segments = driverId.split("-");
+  const hash = segments[segments.length - 1];
+  const hashCode = parseInt(hash, 16) || hash
+    .split("")
+    .reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+  // Select base waypoint based on hash + day + event type
+  const seed = (hashCode + dayOffset * 7 + eventIndex * 13) % ROUTE_WAYPOINTS.length;
+  const baseWaypoint = ROUTE_WAYPOINTS[seed];
+
+  // Add realistic GPS jitter (±0.1 degrees ≈ ±11km at equator)
+  const latJitter = (Math.sin(hashCode + dayOffset + eventIndex) * 0.08);
+  const lonJitter = (Math.cos(hashCode + dayOffset + eventIndex) * 0.08);
+
+  return {
+    latitude: parseFloat((baseWaypoint.lat + latJitter).toFixed(6)),
+    longitude: parseFloat((baseWaypoint.lon + lonJitter).toFixed(6)),
+  };
+}
 
 /**
  * Generate deterministic but varied metrics for a driver
@@ -162,6 +279,7 @@ function generateEventRecords(
 
   // Harsh brake incidents (one event per count)
   for (let i = 0; i < metrics.harsh_braking_count; i++) {
+    const coords = getEventCoordinates("harsh_brake_incident", driverId, dayOffset, i);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -181,11 +299,14 @@ function generateEventRecords(
         speed: 55 + Math.floor(Math.random() * 20),
         description: "Rapid deceleration event",
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Harsh acceleration incidents
   for (let i = 0; i < metrics.harsh_accel_count; i++) {
+    const coords = getEventCoordinates("harsh_accel_incident", driverId, dayOffset, i);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -205,11 +326,14 @@ function generateEventRecords(
         speed: 20 + Math.floor(Math.random() * 15),
         description: "Rapid acceleration event",
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Harsh corner incidents
   if (metrics.harsh_corner_count > 0) {
+    const coords = getEventCoordinates("harsh_corner_incident", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -229,11 +353,14 @@ function generateEventRecords(
         speed: 35 + Math.floor(Math.random() * 15),
         description: `${metrics.harsh_corner_count} harsh corner event(s)`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Speeding incidents
   for (let i = 0; i < metrics.speeding_violations; i++) {
+    const coords = getEventCoordinates("speeding_incident", driverId, dayOffset, i);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -254,11 +381,14 @@ function generateEventRecords(
         posted_limit: 65,
         description: `Speeding event: ${5 + Math.floor(Math.random() * 10)} mph over limit`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Idling episode
   if (metrics.idling_minutes > 0) {
+    const coords = getEventCoordinates("idling_episode", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -279,11 +409,14 @@ function generateEventRecords(
         location: "Rest area",
         description: `${metrics.idling_minutes} minutes idle (${Math.round(metrics.idling_ratio * 100)}% of active engine time)`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Low fuel events
   if (metrics.low_fuel_events > 0) {
+    const coords = getEventCoordinates("low_fuel_incident", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -303,10 +436,13 @@ function generateEventRecords(
         location: "Fuel station",
         description: `Fuel level dropped to ${Math.round(metrics.avg_fuel_level)}% (${metrics.low_fuel_events} alert(s))`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Fuel consumption
+  const fuelCoords = getEventCoordinates("fuel_consumption", driverId, dayOffset, 0);
   events.push({
     tenant_id: tenantId,
     driver_id: driverId,
@@ -327,10 +463,13 @@ function generateEventRecords(
       location: "Daily route",
       description: `${Math.round(metrics.fuel_consumed_liters)} L consumed (${Math.round((metrics.fuel_consumed_liters / (metrics.engine_minutes / 60)) * 10) / 10} L/hr)`,
     },
+    latitude: fuelCoords.latitude,
+    longitude: fuelCoords.longitude,
   });
 
   // DVIR defects
   if (metrics.dvir_defects_count > 0) {
+    const coords = getEventCoordinates("dvir_defect", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -353,11 +492,14 @@ function generateEventRecords(
         location: "Fleet yard",
         description: `${metrics.dvir_defects_count} DVIR defect(s) reported`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Maintenance alerts
   if (metrics.maintenance_alerts_count > 0) {
+    const coords = getEventCoordinates("maintenance_alert", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -377,12 +519,15 @@ function generateEventRecords(
         location: "Service center",
         description: `${metrics.maintenance_alerts_count} maintenance alert(s)`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Fault codes
   if (metrics.fault_codes_count > 0) {
     for (let i = 0; i < metrics.fault_codes_count; i++) {
+      const coords = getEventCoordinates("fault_code", driverId, dayOffset, i);
       events.push({
         tenant_id: tenantId,
         driver_id: driverId,
@@ -402,12 +547,15 @@ function generateEventRecords(
           location: ["I-5 North", "US-101", "Local streets"][i % 3],
           description: "Engine diagnostic fault code",
         },
+        latitude: coords.latitude,
+        longitude: coords.longitude,
       });
     }
   }
 
   // High temperature events
   if (metrics.high_temp_events > 0) {
+    const coords = getEventCoordinates("high_temp_event", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -428,11 +576,14 @@ function generateEventRecords(
         location: "Desert highway",
         description: `High coolant temperature (${metrics.high_temp_events} event(s))`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // Low oil events
   if (metrics.low_oil_events > 0) {
+    const coords = getEventCoordinates("oil_low_event", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -453,11 +604,14 @@ function generateEventRecords(
         location: "On road",
         description: `Low oil pressure detected (${metrics.low_oil_events} event(s))`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // High RPM events
   if (metrics.high_rpm_events > 0) {
+    const coords = getEventCoordinates("rpm_high_event", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -477,11 +631,14 @@ function generateEventRecords(
         location: "Hill climb",
         description: `Engine running at high RPM (${metrics.high_rpm_events} event(s))`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 
   // High load events
   if (metrics.high_load_events > 0) {
+    const coords = getEventCoordinates("load_high_event", driverId, dayOffset, 0);
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -501,6 +658,8 @@ function generateEventRecords(
         location: "Loaded route",
         description: `Engine load at high level (${metrics.high_load_events} event(s))`,
       },
+      latitude: coords.latitude,
+      longitude: coords.longitude,
     });
   }
 

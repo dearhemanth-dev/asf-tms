@@ -11,6 +11,8 @@ export interface EventDetail {
   event_type: string;
   event_date: string; // YYYY-MM-DD
   truck_unit_number: string;
+  latitude: number | null;
+  longitude: number | null;
   details: {
     severity?: string;
     location?: string;
