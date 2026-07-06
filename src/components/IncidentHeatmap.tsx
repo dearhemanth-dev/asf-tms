@@ -179,7 +179,10 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     return (
                       <button
                         key={idx}
-                        onClick={() => openEventModal(cell)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEventModal(cell);
+                        }}
                         className={`w-16 flex-shrink-0 h-8 rounded border flex items-center justify-center text-[11px] font-semibold transition-colors ${bgClass}`}
                         disabled={cell.count === 0}
                       >
@@ -200,8 +203,8 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
       {/* Event Detail Modal */}
       {modal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 md:bg-black/40">
-          <div className="w-full md:w-96 max-h-[90vh] rounded-t-xl md:rounded-xl border border-slate-600 bg-slate-900 md:max-w-lg flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 md:bg-black/40" onClick={closeEventModal}>
+          <div className="w-full md:w-96 max-h-[90vh] rounded-t-xl md:rounded-xl border border-slate-600 bg-slate-900 md:max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* Sticky Header */}
             <div className="flex items-center justify-between gap-3 border-b border-slate-700 px-3 py-2 bg-slate-950">
               <div>
@@ -211,7 +214,10 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                 <p className="text-[10px] text-slate-500">Week of {modal.weekLabel}</p>
               </div>
               <button
-                onClick={closeEventModal}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeEventModal();
+                }}
                 className="rounded px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-slate-200"
               >
                 Close
