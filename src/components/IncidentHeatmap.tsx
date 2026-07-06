@@ -9,6 +9,7 @@ import {
   formatEventDate,
   getIncidentTypeColor,
 } from "@/lib/analytics/incident-heatmap";
+import { reverseGeocodeCoordinates, formatResolvedLocation } from "@/lib/gps-reverse-geocode";
 
 interface IncidentHeatmapProps {
   cells: HeatmapCell[];
@@ -259,19 +260,31 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     )}
                   </div>
 
-                  {/* Location */}
+                  {/* Location with GPS Resolution */}
                   {event.details.location && (
                     <p className="text-[10px] text-slate-400 mb-1">
                       <span className="font-medium">Location:</span> {event.details.location}
                     </p>
                   )}
 
-                  {/* GPS Coordinates */}
-                  {event.latitude && event.longitude && (
-                    <p className="text-[10px] text-slate-500 mb-1">
-                      <span className="font-medium">GPS:</span> {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
-                    </p>
-                  )}
+                  {/* Resolved GPS Location */}
+                  {event.latitude && event.longitude && (() => {
+                    const resolved = reverseGeocodeCoordinates(
+                      event.latitude,
+                      event.longitude,
+                      event.details.location
+                    );
+                    return (
+                      <>
+                        <p className="text-[10px] text-slate-500 mb-1">
+                          <span className="font-medium">Region:</span> {formatResolvedLocation(resolved)}
+                        </p>
+                        <p className="text-[10px] text-slate-600">
+                          <span className="font-medium">Coordinates:</span> {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
+                        </p>
+                      </>
+                    );
+                  })()}
 
                   {/* Speed */}
                   {event.details.speed && (
