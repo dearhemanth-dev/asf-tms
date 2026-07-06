@@ -257,7 +257,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <p className="text-[10px] text-slate-300 flex-1">
                       <span className="font-semibold">{formatEventTime(event.event_timestamp)}</span>
-                      <span className="text-slate-500"> • {formatEventDate(event.event_date)}</span>
+                      <span className="text-slate-400 font-semibold"> • {formatEventDate(event.event_date)}</span>
                       <span className="text-slate-500"> • Unit {event.truck_unit_number}</span>
                     </p>
                     {event.details.severity && (
@@ -306,7 +306,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                   {/* Optional Coordinates (tooltip-like) - hidden on mobile, shown on hover */}
                   {resolved && event.latitude && event.longitude && (
                     <p className="text-[9px] text-slate-600 mt-1 opacity-60 hover:opacity-100 transition">
-                      GPS: {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
+                      {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
                     </p>
                   )}
                 </div>

@@ -164,7 +164,6 @@ export function formatEventTime(isoTimestamp: string): string {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
-    timeZone: "UTC",
   });
 }
 
@@ -177,7 +176,6 @@ export function formatEventDate(dateStr: string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: "UTC",
   });
 }
 

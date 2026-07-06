@@ -443,6 +443,12 @@ function generateEventRecords(
 
   // Fuel consumption
   const fuelCoords = getEventCoordinates("fuel_consumption", driverId, dayOffset, 0);
+  
+  // Convert liters to gallons (1 liter = 0.264172 gallons)
+  const litersConsumed = metrics.fuel_consumed_liters;
+  const gallonsConsumed = Math.round(litersConsumed * 0.264172 * 100) / 100; // Round to 2 decimals
+  const gallonsPerHour = Math.round((litersConsumed / (metrics.engine_minutes / 60)) * 0.264172 * 10) / 10;
+  
   events.push({
     tenant_id: tenantId,
     driver_id: driverId,
@@ -450,18 +456,20 @@ function generateEventRecords(
     event_date: snapshotDate,
     event_timestamp: createTimestamp(23, 0),
     event_type: "fuel_consumption",
-    metric_value: metrics.fuel_consumed_liters,
+    metric_value: gallonsConsumed, // Store in gallons
     event_count: null,
     duration_minutes: null,
     data_source: "demo_seed",
     source_id: `demo_fuel_consumption_${snapshotDate}`,
     status: "confirmed",
     details: {
-      liters_consumed: metrics.fuel_consumed_liters,
+      liters_consumed: litersConsumed,
+      gallons_consumed: gallonsConsumed,
       engine_hours: Math.round(metrics.engine_minutes / 60),
-      consumption_rate_per_hour: Math.round((metrics.fuel_consumed_liters / (metrics.engine_minutes / 60)) * 10) / 10,
+      consumption_rate_per_hour_gallons: gallonsPerHour,
+      consumption_rate_per_hour_liters: Math.round((litersConsumed / (metrics.engine_minutes / 60)) * 10) / 10,
       location: "Daily route",
-      description: `${Math.round(metrics.fuel_consumed_liters)} L consumed (${Math.round((metrics.fuel_consumed_liters / (metrics.engine_minutes / 60)) * 10) / 10} L/hr)`,
+      description: `${gallonsConsumed} gal consumed (${gallonsPerHour} gal/hr)`,
     },
     latitude: fuelCoords.latitude,
     longitude: fuelCoords.longitude,
