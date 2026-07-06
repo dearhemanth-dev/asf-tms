@@ -5,6 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { APP_ROLES, type AppRole } from "@/lib/auth";
 import { FLEET_API_ROUTES } from "@/lib/fleet-api";
+import { IncidentHeatmap } from "@/components/IncidentHeatmap";
+import {
+  createWeeklyHeatmap,
+  type EventDetail,
+} from "@/lib/analytics/incident-heatmap";
 
 type TimeWindow = "7" | "30" | "60";
 
@@ -387,7 +392,15 @@ export default function DriverRankingPage() {
   const [driverDirectory, setDriverDirectory] = useState<DriverDirectoryRow[]>([]);
   const [analyticsData, setAnalyticsData] = useState<AggregatedDriverMetrics[]>([]);
   const [expandedDriverId, setExpandedDriverId] = useState<string | null>(null);
-  const [expandedDriverEvents, setExpandedDriverEvents] = useState<Record<string, unknown> | null>(null);
+  const [expandedDriverEvents, setExpandedDriverEvents] = useState<{
+    driver_id: string;
+    start_date: string;
+    end_date: string;
+    total_events: number;
+    events_by_date: Record<string, Record<string, unknown[]>>;
+    raw_events: EventDetail[];
+    query_time_ms: number;
+  } | null>(null);
   const [expandedEventsLoading, setExpandedEventsLoading] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   // Drill-down UX refactor: organized by business impact categories
@@ -683,7 +696,11 @@ export default function DriverRankingPage() {
             {rankingRows.map((row, index) => {
               const styles = tierStyles(row.tier);
               const isExpanded = expandedDriverId === row.key;
-              const eventsByType = expandedDriverEvents?.events_by_date as Record<string, Record<string, unknown[]>> | undefined;
+              // Transform raw events into weekly heatmap structure
+              const heatmapCells =
+                expandedDriverEvents?.raw_events && expandedDriverEvents.raw_events.length > 0
+                  ? createWeeklyHeatmap(expandedDriverEvents.raw_events, parseInt(windowDays))
+                  : [];
               return (
                 <article
                   key={row.key}
@@ -791,36 +808,17 @@ export default function DriverRankingPage() {
                         </div>
                       </div>
 
-                      {/* Event Details Section */}
+                      {/* Event Details Section - Weekly Incident Heatmap */}
                       {expandedEventsLoading ? (
                         <div className="rounded-md border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
                           Loading detailed incident history...
                         </div>
-                      ) : eventsByType && Object.keys(eventsByType).length > 0 ? (
-                        <div className="rounded-md border border-slate-700 bg-slate-950/40 p-3">
-                          <p className="mb-3 text-xs font-medium text-slate-300">Incident History ({(expandedDriverEvents as any)?.total_events || 0} incidents over {windowDays} days)</p>
-                          <div className="space-y-2 text-[11px]">
-                            {Object.entries(eventsByType)
-                              .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
-                              .slice(0, 7)
-                              .map(([date, typeMap]) => (
-                                <div key={date} className="rounded-sm border border-slate-800/50 bg-slate-900/50 px-2.5 py-1.5">
-                                  <div className="mb-1 text-slate-400 font-medium">{date}</div>
-                                  <div className="text-slate-300">
-                                    {Object.entries(typeMap).map(([type, events]) => {
-                                      const count = (events as unknown[]).length;
-                                      const label = type
-                                        .replace(/_incident$/, "")
-                                        .replace(/_episode$/, "")
-                                        .replace(/_event$/, "")
-                                        .replace(/_/g, " ");
-                                      return `${count} ${label}${count !== 1 ? "s" : ""}`;
-                                    }).join("  •  ")}
-                                  </div>
-                                </div>
-                              ))}
-                          </div>
-                        </div>
+                      ) : heatmapCells && heatmapCells.length > 0 ? (
+                        <IncidentHeatmap
+                          cells={heatmapCells}
+                          totalEvents={expandedDriverEvents?.total_events || 0}
+                          windowDays={parseInt(windowDays)}
+                        />
                       ) : null}
                     </div>
                   )}
