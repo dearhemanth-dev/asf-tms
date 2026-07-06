@@ -11,6 +11,7 @@ type TimeWindow = "7" | "30" | "60";
 type SessionState = {
   ready: boolean;
   role: AppRole | null;
+  username: string | null;
 };
 
 type PillarKey = "safety" | "idling" | "fuel" | "dvir" | "maintenance";
@@ -100,30 +101,54 @@ type DriverScoreRow = {
   trucks: string[];
   lastLocation: string;
   totalScore: number;
-  tier: "reward" | "monitor" | "intervene";
+  tier: "top_performer" | "on_track" | "action_needed";
   pillar: PillarScores;
-  faultCount: number;
-  alertCount: number;
   speedingCount: number;
+  harshBrakingCount: number;
+  harshAccelCount: number;
+  faultCount: number;
+  maintenanceAlertsCount: number;
+  dvirDefectsCount: number;
+  lowFuelEventsCount: number;
   idleRatio: number;
   avgFuelLevel: number | null;
   riskSummary: string;
 };
 
-type DriverAccumulator = {
-  key: string;
-  driver: string;
-  trucks: Set<string>;
-  lastLocation: string;
-  faultCount: number;
-  alertCount: number;
-  speedingCount: number;
-  engineMinutes: number;
-  idlingMinutes: number;
-  lowFuelCount: number;
-  fuelSamples: number[];
-  complianceHits: number;
-  maintenancePressure: number;
+// Aggregated analytics response from /api/analytics/driver-window
+type AggregatedDriverMetrics = {
+  driver_id: string;
+  driver_name: string;
+  truck_unit_number: string;
+  window_days: number;
+  days_with_data: number;
+  
+  // Safety (35%)
+  harsh_braking_total: number;
+  harsh_accel_total: number;
+  harsh_corner_total: number;
+  speeding_violations_total: number;
+  
+  // Idling (20%)
+  engine_minutes_total: number;
+  idling_minutes_total: number;
+  idling_ratio_avg: number;
+  
+  // Fuel (15%)
+  avg_fuel_level_mean: number;
+  fuel_consumed_total_liters: number;
+  low_fuel_events_total: number;
+  
+  // DVIR (15%)
+  dvir_defects_total: number;
+  maintenance_alerts_total: number;
+  
+  // Maintenance (15%)
+  fault_codes_total: number;
+  coolant_high_events_total: number;
+  oil_low_events_total: number;
+  rpm_high_events_total: number;
+  load_high_events_total: number;
 };
 
 const WINDOW_LABELS: Record<TimeWindow, string> = {
@@ -154,22 +179,6 @@ const DEFAULT_WEIGHTS: WeightState = {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
-}
-
-function normalizeDriverName(name: string, truckNo?: string) {
-  const normalized = name.trim();
-  if (!normalized || normalized.toLowerCase() === "unassigned") {
-    return truckNo ? `Driver ${truckNo}` : "Driver";
-  }
-  return normalized;
-}
-
-function normalizeUnitKey(value: string) {
-  return value
-    .toUpperCase()
-    .replace(/^TRUCK\s*#?\s*/i, "")
-    .replace(/^UNIT\s*#?\s*/i, "")
-    .replace(/[^A-Z0-9]/g, "");
 }
 
 function asNumber(value: unknown): number | null {
@@ -232,24 +241,6 @@ function countFaultCodes(value: unknown): number {
   return 1;
 }
 
-function initAccumulator(driverKey: string): DriverAccumulator {
-  return {
-    key: driverKey,
-    driver: driverKey,
-    trucks: new Set<string>(),
-    lastLocation: "Location unavailable",
-    faultCount: 0,
-    alertCount: 0,
-    speedingCount: 0,
-    engineMinutes: 0,
-    idlingMinutes: 0,
-    lowFuelCount: 0,
-    fuelSamples: [],
-    complianceHits: 0,
-    maintenancePressure: 0,
-  };
-}
-
 function normalizedWeights(weights: WeightState): WeightState {
   const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
   if (total <= 0) return { ...DEFAULT_WEIGHTS };
@@ -262,17 +253,52 @@ function normalizedWeights(weights: WeightState): WeightState {
   };
 }
 
-function scoreDriver(acc: DriverAccumulator, multiplier: number, weights: WeightState): DriverScoreRow {
-  const idleRatio = acc.engineMinutes > 0 ? clamp(acc.idlingMinutes / acc.engineMinutes, 0, 1.5) : 0;
-  const avgFuelLevel = acc.fuelSamples.length
-    ? acc.fuelSamples.reduce((sum, value) => sum + value, 0) / acc.fuelSamples.length
-    : null;
+// Convert aggregated analytics metrics to DPI score
+function scoreDriverFromAnalytics(
+  metrics: AggregatedDriverMetrics,
+  multiplier: number,
+  weights: WeightState
+): DriverScoreRow {
+  // Normalize totals to per-day averages so penalty scale stays consistent
+  const days = Math.max(metrics.days_with_data, 1);
 
-  const safetyPenalty = (acc.faultCount * 5 + acc.alertCount * 12 + acc.speedingCount * 8) * multiplier;
+  const idleRatio = metrics.engine_minutes_total > 0 
+    ? clamp(metrics.idling_minutes_total / metrics.engine_minutes_total, 0, 1.5)
+    : 0;
+
+  const avgFuelLevel = metrics.avg_fuel_level_mean ?? null;
+
+  // Safety: per-day average events × penalty weights
+  const safetyPenalty = (
+    (metrics.harsh_braking_total / days) * 2 +
+    (metrics.harsh_accel_total / days) * 2 +
+    (metrics.harsh_corner_total / days) * 1.5 +
+    (metrics.speeding_violations_total / days) * 5
+  ) * multiplier;
+
+  // Idling: uses ratio (already averaged)
   const idlingPenalty = idleRatio * 75 * multiplier;
-  const fuelPenalty = ((avgFuelLevel === null ? 22 : Math.abs(avgFuelLevel - 58) * 0.95) + acc.lowFuelCount * 9) * multiplier;
-  const compliancePenalty = (acc.complianceHits * 11 + acc.faultCount * 4) * multiplier;
-  const maintenancePenalty = acc.maintenancePressure * 8 * multiplier;
+
+  // Fuel: uses mean (already averaged)
+  const fuelPenalty = (
+    (avgFuelLevel === null ? 22 : Math.abs(avgFuelLevel - 58) * 0.95) +
+    (metrics.low_fuel_events_total / days) * 9
+  ) * multiplier;
+
+  // DVIR/Compliance: per-day averages
+  const compliancePenalty = (
+    (metrics.dvir_defects_total / days) * 11 +
+    (metrics.maintenance_alerts_total / days) * 6 +
+    (metrics.fault_codes_total / days) * 4
+  ) * multiplier;
+
+  // Maintenance: per-day averages
+  const maintenancePenalty = (
+    (metrics.coolant_high_events_total / days) * 8 +
+    (metrics.oil_low_events_total / days) * 8 +
+    (metrics.rpm_high_events_total / days) * 5 +
+    (metrics.load_high_events_total / days) * 5
+  ) * multiplier;
 
   const pillar: PillarScores = {
     safety: clamp(100 - safetyPenalty, 20, 100),
@@ -282,41 +308,43 @@ function scoreDriver(acc: DriverAccumulator, multiplier: number, weights: Weight
     maintenance: clamp(100 - maintenancePenalty, 20, 100),
   };
 
-  const w = normalizedWeights(weights);
-
   const totalScore =
-    pillar.safety * w.safety +
-    pillar.idling * w.idling +
-    pillar.fuel * w.fuel +
-    pillar.dvir * w.dvir +
-    pillar.maintenance * w.maintenance;
+    pillar.safety * (weights.safety / 100) +
+    pillar.idling * (weights.idling / 100) +
+    pillar.fuel * (weights.fuel / 100) +
+    pillar.dvir * (weights.dvir / 100) +
+    pillar.maintenance * (weights.maintenance / 100);
 
   const roundedTotal = Math.round(totalScore);
-  const tier: DriverScoreRow["tier"] = roundedTotal >= 82 ? "reward" : roundedTotal >= 67 ? "monitor" : "intervene";
+  const tier: DriverScoreRow["tier"] = roundedTotal >= 82 ? "top_performer" : roundedTotal >= 67 ? "on_track" : "action_needed";
 
   const weakest = Object.entries(pillar).sort((a, b) => a[1] - b[1])[0]?.[0] ?? "safety";
   const riskSummary =
     weakest === "idling"
-      ? "High idle exposure relative to engine activity"
+      ? "High idle ratio suggests inefficiency"
       : weakest === "maintenance"
-        ? "Engine stress indicators suggest maintenance risk"
+        ? "Engine stress events indicate maintenance risk"
         : weakest === "fuel"
-          ? "Fuel discipline variance is above fleet baseline"
+          ? "Fuel discipline needs improvement"
           : weakest === "dvir"
-            ? "Compliance and fault-pressure needs immediate focus"
-            : "Safety behavior trend is below target";
+            ? "Compliance and defect pressure is high"
+            : "Safety metrics below target";
 
   return {
-    key: acc.key,
-    driver: acc.driver,
-    trucks: Array.from(acc.trucks).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })),
-    lastLocation: acc.lastLocation,
+    key: metrics.driver_id,
+    driver: metrics.driver_name,
+    trucks: [metrics.truck_unit_number],
+    lastLocation: "",
     totalScore: roundedTotal,
     tier,
     pillar,
-    faultCount: acc.faultCount,
-    alertCount: acc.alertCount,
-    speedingCount: acc.speedingCount,
+    speedingCount: metrics.speeding_violations_total,
+    harshBrakingCount: metrics.harsh_braking_total,
+    harshAccelCount: metrics.harsh_accel_total,
+    faultCount: metrics.fault_codes_total,
+    maintenanceAlertsCount: metrics.maintenance_alerts_total,
+    dvirDefectsCount: metrics.dvir_defects_total,
+    lowFuelEventsCount: metrics.low_fuel_events_total,
     idleRatio,
     avgFuelLevel,
     riskSummary,
@@ -324,39 +352,49 @@ function scoreDriver(acc: DriverAccumulator, multiplier: number, weights: Weight
 }
 
 function tierStyles(tier: DriverScoreRow["tier"]) {
-  if (tier === "reward") {
+  if (tier === "top_performer") {
     return {
       badge: "border-emerald-500/70 bg-emerald-900/30 text-emerald-200",
       card: "border-emerald-700/40",
-      label: "Reward Candidate",
+      label: "Top Performer",
     };
   }
-  if (tier === "intervene") {
+  if (tier === "action_needed") {
     return {
       badge: "border-rose-500/70 bg-rose-900/35 text-rose-200",
       card: "border-rose-700/40",
-      label: "Intervention Queue",
+      label: "Action Needed",
     };
   }
   return {
     badge: "border-amber-500/70 bg-amber-900/25 text-amber-200",
     card: "border-amber-700/35",
-    label: "Monitor",
+    label: "On Track",
   };
 }
 
 export default function DriverRankingPage() {
   const router = useRouter();
-  const [session, setSession] = useState<SessionState>({ ready: false, role: null });
+  const [session, setSession] = useState<SessionState>({ ready: false, role: null, username: null });
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const isHkManager = session.username === "hkmanager";
   const [windowDays, setWindowDays] = useState<TimeWindow>("30");
   const [infoOpen, setInfoOpen] = useState(false);
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [seedStatus, setSeedStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [seedMessage, setSeedMessage] = useState<string>("");
   const [vehicles, setVehicles] = useState<LiveVehicle[]>([]);
   const [faults, setFaults] = useState<FaultRecord[]>([]);
   const [driverDirectory, setDriverDirectory] = useState<DriverDirectoryRow[]>([]);
+  const [analyticsData, setAnalyticsData] = useState<AggregatedDriverMetrics[]>([]);
+  const [expandedDriverId, setExpandedDriverId] = useState<string | null>(null);
+  const [expandedDriverEvents, setExpandedDriverEvents] = useState<Record<string, unknown> | null>(null);
+  const [expandedEventsLoading, setExpandedEventsLoading] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  // Drill-down UX refactor: organized by business impact categories
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -364,8 +402,9 @@ export default function DriverRankingPage() {
     }
 
     const sessionRole = window.sessionStorage.getItem("demoRole");
+    const sessionUsername = window.sessionStorage.getItem("demoUsername") ?? null;
     const normalizedRole = APP_ROLES.includes(sessionRole as AppRole) ? (sessionRole as AppRole) : null;
-    setSession({ ready: true, role: normalizedRole });
+    setSession({ ready: true, role: normalizedRole, username: sessionUsername });
   }, []);
 
   useEffect(() => {
@@ -421,128 +460,63 @@ export default function DriverRankingPage() {
     void loadData();
   }, [session.ready, session.role]);
 
+  // Fetch aggregated analytics data
+  useEffect(() => {
+    async function loadAnalytics() {
+      try {
+        const response = await fetch(`/api/analytics/driver-window?days=${windowDays}`, {
+          cache: "no-store",
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setAnalyticsData(data.drivers ?? []);
+        } else {
+          setError("Failed to load driver analytics");
+        }
+      } catch {
+        setError("Network error loading analytics");
+      }
+    }
+    void loadAnalytics();
+  }, [windowDays]);
+
   const weightedFormula = useMemo(() => {
     const w = normalizedWeights(DEFAULT_WEIGHTS);
     return `DPI = ${w.safety.toFixed(2)}(Safety) + ${w.idling.toFixed(2)}(Idling) + ${w.fuel.toFixed(2)}(Fuel) + ${w.dvir.toFixed(2)}(DVIR) + ${w.maintenance.toFixed(2)}(Maintenance)`;
   }, []);
 
   const rankingRows = useMemo(() => {
+    // Load aggregated analytics data
     const multiplier = WINDOW_MULTIPLIER[windowDays];
-    const driverMap = new Map<string, DriverAccumulator>();
-    const vehicleToDriver = new Map<string, string>();
-    const unitToDriver = new Map<string, string>();
-    const driverByUnit = new Map<string, string>();
-
-    for (const row of driverDirectory) {
-      const key = normalizeUnitKey(row.assignedTruckUnitNumber || "");
-      if (!key) continue;
-      const fullName = String(row.fullName ?? "").trim();
-      if (!fullName) continue;
-      driverByUnit.set(key, fullName);
+    
+    if (analyticsData.length === 0) {
+      return [];
     }
 
-    for (const vehicle of vehicles) {
-      const unit = normalizeUnitKey(vehicle.truckNo || "");
-      const resolvedName = (unit ? driverByUnit.get(unit) : undefined) ?? vehicle.driver;
-      const driverKey = normalizeDriverName(resolvedName, vehicle.truckNo);
-      const existing = driverMap.get(driverKey) ?? initAccumulator(driverKey);
-
-      existing.driver = driverKey;
-      existing.trucks.add(vehicle.truckNo || "Unknown");
-      existing.lastLocation = vehicle.location || existing.lastLocation;
-      existing.alertCount += vehicle.status === "alert" ? 1 : 0;
-      existing.speedingCount += (vehicle.mph ?? 0) >= 67 ? 1 : 0;
-
-      if (typeof vehicle.fuelLevel === "number" && Number.isFinite(vehicle.fuelLevel)) {
-        existing.fuelSamples.push(vehicle.fuelLevel);
-        if (vehicle.fuelLevel <= 15) {
-          existing.lowFuelCount += 1;
-        }
-      }
-
-      if (unit) {
-        unitToDriver.set(unit, driverKey);
-      }
-      vehicleToDriver.set(vehicle.id, driverKey);
-      driverMap.set(driverKey, existing);
-    }
-
-    for (const fault of faults) {
-      const viaVehicleId = fault.vehicleId ? vehicleToDriver.get(String(fault.vehicleId)) : undefined;
-      const viaUnit = fault.vehicleName ? unitToDriver.get(normalizeUnitKey(String(fault.vehicleName))) : undefined;
-      const lookupName = fault.vehicleName ? driverByUnit.get(normalizeUnitKey(String(fault.vehicleName))) : undefined;
-      const driverKey = viaVehicleId ?? viaUnit ?? normalizeDriverName(lookupName ?? "", fault.vehicleName);
-
-      const existing = driverMap.get(driverKey) ?? initAccumulator(driverKey);
-      if (fault.vehicleName) {
-        existing.trucks.add(String(fault.vehicleName));
-      }
-
-      const stats = fault.stats;
-      const idlingMs = pickStat(stats, ["idlingDurationMilliseconds"]);
-      if (idlingMs !== null) {
-        existing.idlingMinutes += clamp(idlingMs / 60000, 0, 24 * 60);
-      }
-
-      const engineSeconds = pickStat(stats, ["obdEngineSeconds"]);
-      if (engineSeconds !== null) {
-        existing.engineMinutes += clamp(engineSeconds / 60, 0, 24 * 60);
-      }
-
-      const coolantTempC = pickStat(stats, ["engineCoolantTemperatureMilliC"]);
-      if (coolantTempC !== null) {
-        const tempC = coolantTempC > 1000 ? coolantTempC / 1000 : coolantTempC;
-        if (tempC >= 105) existing.maintenancePressure += 1;
-      }
-
-      const oilPressure = pickStat(stats, ["engineOilPressureKPa"]);
-      if (oilPressure !== null && oilPressure < 110) {
-        existing.maintenancePressure += 1;
-      }
-
-      const rpm = pickStat(stats, ["engineRpm"]);
-      if (rpm !== null && rpm > 2500) {
-        existing.maintenancePressure += 1;
-      }
-
-      const engineLoad = pickStat(stats, ["engineLoadPercent"]);
-      if (engineLoad !== null && engineLoad > 92) {
-        existing.maintenancePressure += 1;
-      }
-
-      const faultCount = countFaultCodes(fault.faultCodes);
-      existing.faultCount += faultCount;
-      if (faultCount > 0) {
-        existing.complianceHits += 1;
-      }
-
-      driverMap.set(driverKey, existing);
-    }
-
-    return Array.from(driverMap.values())
-      .map((acc) => scoreDriver(acc, multiplier, DEFAULT_WEIGHTS))
+    return analyticsData
+      .map((metrics) => scoreDriverFromAnalytics(metrics, multiplier, DEFAULT_WEIGHTS))
       .sort((a, b) => b.totalScore - a.totalScore);
-  }, [driverDirectory, faults, vehicles, windowDays]);
+  }, [analyticsData, windowDays]);
 
   const summary = useMemo(() => {
-    const reward = rankingRows.filter((row) => row.tier === "reward").length;
-    const intervene = rankingRows.filter((row) => row.tier === "intervene").length;
+    const topPerformers = rankingRows.filter((row) => row.tier === "top_performer").length;
+    const actionNeeded = rankingRows.filter((row) => row.tier === "action_needed").length;
     const avgScore =
       rankingRows.length > 0
         ? Math.round(rankingRows.reduce((sum, row) => sum + row.totalScore, 0) / rankingRows.length)
         : 0;
     return {
       drivers: rankingRows.length,
-      reward,
-      intervene,
+      topPerformers,
+      actionNeeded,
       avgScore,
     };
   }, [rankingRows]);
 
-  const topRewards = useMemo(() => rankingRows.filter((row) => row.tier === "reward").slice(0, 3), [rankingRows]);
+  const topRewards = useMemo(() => rankingRows.filter((row) => row.tier === "top_performer").slice(0, 3), [rankingRows]);
   const interventionQueue = useMemo(() => {
     return [...rankingRows]
-      .filter((row) => row.tier === "intervene")
+      .filter((row) => row.tier === "action_needed")
       .sort((a, b) => a.totalScore - b.totalScore)
       .slice(0, 4);
   }, [rankingRows]);
@@ -550,26 +524,95 @@ export default function DriverRankingPage() {
   async function refreshData() {
     setRefreshing(true);
     try {
-      const [vehicleResponse, faultResponse, driverResponse] = await Promise.all([
+      const [vehicleResponse, faultResponse, driverResponse, analyticsResponse] = await Promise.all([
         fetch(FLEET_API_ROUTES.vehicles, { cache: "no-store" }),
         fetch(FLEET_API_ROUTES.faultCodes, { cache: "no-store" }),
         fetch("/api/drivers", { cache: "no-store" }),
+        fetch(`/api/analytics/driver-window?days=${windowDays}`, { cache: "no-store" }),
       ]);
 
       const vehiclePayload = (await vehicleResponse.json()) as { vehicles?: LiveVehicle[] };
       const faultPayload = (await faultResponse.json()) as { faults?: FaultRecord[] };
-      const driverPayload = (await driverResponse.json()) as {
-        drivers?: DriverDirectoryRow[];
-      };
+      const driverPayload = (await driverResponse.json()) as { drivers?: DriverDirectoryRow[] };
+      const analyticsPayload = (await analyticsResponse.json()) as { drivers?: AggregatedDriverMetrics[] };
 
       setVehicles(vehicleResponse.ok ? vehiclePayload.vehicles ?? [] : []);
       setFaults(faultResponse.ok ? faultPayload.faults ?? [] : []);
       setDriverDirectory(driverPayload.drivers ?? []);
+      if (analyticsResponse.ok) setAnalyticsData(analyticsPayload.drivers ?? []);
       setError(null);
     } catch {
       setError("Unable to refresh live driver metrics right now.");
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function seedAnalyticsData() {
+    setSeedStatus("loading");
+    setSeedMessage("Seeding 7-day demo data...");
+    try {
+      const response = await fetch("/api/admin/analytics/seed-demo", {
+        method: "POST",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        setSeedStatus("error");
+        setSeedMessage(result.error ?? "Failed to seed data");
+        return;
+      }
+
+      setSeedStatus("success");
+      setSeedMessage(
+        `✓ Seeded ${result.inserted} snapshots for ${result.drivers_seeded} drivers`
+      );
+      // Re-fetch analytics so the Scoring Pipeline reflects the new data
+      const analyticsRes = await fetch(`/api/analytics/driver-window?days=${windowDays}`, { cache: "no-store" });
+      if (analyticsRes.ok) {
+        const analyticsPayload = await analyticsRes.json() as { drivers?: AggregatedDriverMetrics[] };
+        setAnalyticsData(analyticsPayload.drivers ?? []);
+      }
+      setTimeout(() => setSeedStatus("idle"), 4000);
+    } catch (err) {
+      setSeedStatus("error");
+      setSeedMessage(String(err));
+    }
+  }
+
+  async function loadEventsForDriver(driverId: string) {
+    setExpandedEventsLoading(true);
+    try {
+      const today = new Date();
+      const endDate = today.toISOString().split("T")[0];
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - parseInt(windowDays));
+      const startDateStr = startDate.toISOString().split("T")[0];
+
+      const response = await fetch(
+        `/api/analytics/driver-events?driver_id=${driverId}&start_date=${startDateStr}&end_date=${endDate}`,
+        { cache: "no-store" }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setExpandedDriverEvents(data);
+      }
+    } catch (err) {
+      console.error("Failed to load events:", err);
+    } finally {
+      setExpandedEventsLoading(false);
+    }
+  }
+
+  function handleExpandDriver(driverId: string) {
+    const isExpanded = expandedDriverId === driverId;
+    setExpandedDriverId(isExpanded ? null : driverId);
+    if (!isExpanded) {
+      void loadEventsForDriver(driverId);
+    } else {
+      setExpandedDriverEvents(null);
     }
   }
 
@@ -605,6 +648,14 @@ export default function DriverRankingPage() {
             >
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
+            {isHkManager ? (
+              <button
+                onClick={() => setInspectorOpen(true)}
+                className="rounded-md border border-violet-600/70 bg-violet-950/35 px-3 py-1.5 text-xs font-medium text-violet-200 hover:bg-violet-900/40"
+              >
+                Data Inspector
+              </button>
+            ) : null}
             <Link
               href="/reports/vehicle-ranking"
               className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
@@ -633,12 +684,12 @@ export default function DriverRankingPage() {
             <p className="mt-1 text-2xl font-semibold text-slate-100">{summary.drivers}</p>
           </article>
           <article className="rounded-xl border border-emerald-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Reward Candidates</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-200">{summary.reward}</p>
+            <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Top Performers</p>
+            <p className="mt-1 text-2xl font-semibold text-emerald-200">{summary.topPerformers}</p>
           </article>
           <article className="rounded-xl border border-rose-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Intervention Queue</p>
-            <p className="mt-1 text-2xl font-semibold text-rose-200">{summary.intervene}</p>
+            <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Action Needed</p>
+            <p className="mt-1 text-2xl font-semibold text-rose-200">{summary.actionNeeded}</p>
           </article>
           <article className="rounded-xl border border-cyan-700/35 bg-slate-900/65 p-3">
             <p className="text-[11px] uppercase tracking-wide text-cyan-200/80">Fleet Avg DPI</p>
@@ -669,111 +720,157 @@ export default function DriverRankingPage() {
           <p className="mt-2 text-xs text-slate-400">{WINDOW_NOTES[windowDays]}</p>
         </div>
 
-        <section className="grid gap-3 md:grid-cols-2">
-          <article className="rounded-xl border border-emerald-700/35 bg-slate-900/65 p-4">
-            <h3 className="text-sm font-semibold text-emerald-200">Top Reward Candidates</h3>
-            <div className="mt-3 space-y-2">
-              {topRewards.length === 0 ? (
-                <p className="text-xs text-slate-400">No high-confidence reward candidates in this window.</p>
-              ) : (
-                topRewards.map((row, index) => (
-                  <div key={row.key} className="rounded-lg border border-emerald-800/35 bg-slate-950/55 px-3 py-2">
-                    <p className="text-sm font-semibold text-slate-100">
-                      #{index + 1} {row.driver}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-300">DPI {row.totalScore} | Trucks: {row.trucks.join(", ")}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-
-          <article className="rounded-xl border border-rose-700/35 bg-slate-900/65 p-4">
-            <h3 className="text-sm font-semibold text-rose-200">Immediate Intervention Queue</h3>
-            <div className="mt-3 space-y-2">
-              {interventionQueue.length === 0 ? (
-                <p className="text-xs text-slate-400">No urgent intervention queue in this window.</p>
-              ) : (
-                interventionQueue.map((row) => (
-                  <div key={row.key} className="rounded-lg border border-rose-800/35 bg-slate-950/55 px-3 py-2">
-                    <p className="text-sm font-semibold text-slate-100">{row.driver}</p>
-                    <p className="mt-1 text-xs text-slate-300">DPI {row.totalScore} | {row.riskSummary}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-        </section>
 
         {loading ? (
           <section className="rounded-xl border border-slate-800 bg-slate-900/65 p-4 text-sm text-slate-300">Loading live driver telemetry...</section>
         ) : null}
 
         {!loading ? (
-          <section className="space-y-3">
+          <section className="space-y-2">
             {rankingRows.map((row, index) => {
               const styles = tierStyles(row.tier);
+              const isExpanded = expandedDriverId === row.key;
+              const eventsByType = expandedDriverEvents?.events_by_date as Record<string, Record<string, unknown[]>> | undefined;
               return (
-                <article key={row.key} className={`rounded-xl border bg-slate-900/65 p-4 ${styles.card}`}>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-slate-400">Rank #{index + 1}</p>
-                      <h3 className="text-base font-semibold text-slate-100">{row.driver}</h3>
-                      <p className="mt-1 text-xs text-slate-400">Truck(s): {row.trucks.join(", ")}</p>
+                <article
+                  key={row.key}
+                  className={`cursor-pointer rounded-lg border transition ${styles.card} bg-slate-900/65 p-3 hover:bg-slate-900/80 md:p-4`}
+                  onClick={() => handleExpandDriver(row.key)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-baseline gap-2">
+                        <p className="text-xs text-slate-500">#{index + 1}</p>
+                        <h3 className="text-sm font-semibold text-slate-100">{row.driver}</h3>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">Unit {row.trucks.join(" • ")}</p>
+                      <p className="mt-2 text-xs leading-relaxed text-slate-300">{row.riskSummary}</p>
                     </div>
-                    <div className="text-right">
-                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${styles.badge}`}>
+                    <div className="flex flex-col items-end gap-2">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
                         {styles.label}
                       </span>
-                      <p className="mt-1 text-2xl font-semibold text-cyan-100">{row.totalScore}</p>
-                      <p className="text-[11px] text-slate-400">DPI</p>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold text-cyan-100">{row.totalScore}</p>
+                        <p className="text-[10px] text-slate-500">DPI</p>
+                      </div>
                     </div>
                   </div>
 
-                  <p className="mt-3 text-xs text-slate-300">{row.riskSummary}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">Last seen: {row.lastLocation}</p>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-                    <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-                      <p className="text-slate-400">Faults</p>
-                      <p className="font-semibold text-slate-100">{row.faultCount}</p>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-                      <p className="text-slate-400">Alerts</p>
-                      <p className="font-semibold text-slate-100">{row.alertCount}</p>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-                      <p className="text-slate-400">Speeding Flags</p>
-                      <p className="font-semibold text-slate-100">{row.speedingCount}</p>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1.5">
-                      <p className="text-slate-400">Idle Ratio</p>
-                      <p className="font-semibold text-slate-100">{Math.round(row.idleRatio * 100)}%</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 space-y-2">
-                    {([
-                      ["Safety", row.pillar.safety],
-                      ["Idling", row.pillar.idling],
-                      ["Fuel", row.pillar.fuel],
-                      ["Compliance", row.pillar.dvir],
-                      ["Maintenance", row.pillar.maintenance],
-                    ] as Array<[string, number]>).map(([label, score]) => (
-                      <div key={label}>
-                        <div className="mb-1 flex items-center justify-between text-[11px]">
-                          <span className="text-slate-400">{label}</span>
-                          <span className="font-medium text-slate-200">{Math.round(score)}</span>
+                  {isExpanded && (
+                    <div className="mt-4 space-y-3 border-t border-slate-700/40 pt-4">
+                      {/* Category Cards - Organized by Business Impact */}
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {/* Safety Issues */}
+                        <div 
+                          onClick={() => setExpandedCategory(expandedCategory === 'safety' ? null : 'safety')}
+                          className="cursor-pointer rounded-lg border border-rose-700/40 bg-rose-950/20 p-3 hover:bg-rose-950/30 transition"
+                        >
+                          <h4 className="text-xs font-semibold text-rose-200 mb-2">Safety Issues</h4>
+                          <div className="space-y-1 text-xs text-slate-300">
+                            <div className="flex justify-between">
+                              <span>Speeding Violations</span>
+                              <span className="font-semibold text-rose-100">{row.speedingCount}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Harsh Braking Events</span>
+                              <span className="font-semibold text-rose-100">{row.harshBrakingCount}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Rapid Acceleration Events</span>
+                              <span className="font-semibold text-rose-100">{row.harshAccelCount}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="h-1.5 rounded-full bg-slate-800">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400"
-                            style={{ width: `${clamp(score, 0, 100)}%` }}
-                          />
+
+                        {/* Efficiency Issues */}
+                        <div 
+                          onClick={() => setExpandedCategory(expandedCategory === 'efficiency' ? null : 'efficiency')}
+                          className="cursor-pointer rounded-lg border border-amber-700/40 bg-amber-950/20 p-3 hover:bg-amber-950/30 transition"
+                        >
+                          <h4 className="text-xs font-semibold text-amber-200 mb-2">Efficiency</h4>
+                          <div className="space-y-1 text-xs text-slate-300">
+                            <div className="flex justify-between">
+                              <span>Idle Time (% of engine)</span>
+                              <span className="font-semibold text-amber-100">{Math.round(row.idleRatio * 100)}%</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Fuel Management */}
+                        <div 
+                          onClick={() => setExpandedCategory(expandedCategory === 'fuel' ? null : 'fuel')}
+                          className="cursor-pointer rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-3 hover:bg-cyan-950/30 transition"
+                        >
+                          <h4 className="text-xs font-semibold text-cyan-200 mb-2">Fuel Performance</h4>
+                          <div className="space-y-1 text-xs text-slate-300">
+                            <div className="flex justify-between">
+                              <span>Avg Tank Level</span>
+                              <span className="font-semibold text-cyan-100">{row.avgFuelLevel === null ? "N/A" : `${Math.round(row.avgFuelLevel)}%`}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Low Fuel Events</span>
+                              <span className="font-semibold text-cyan-100">{row.lowFuelEventsCount}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Maintenance & Compliance */}
+                        <div 
+                          onClick={() => setExpandedCategory(expandedCategory === 'compliance' ? null : 'compliance')}
+                          className="cursor-pointer rounded-lg border border-violet-700/40 bg-violet-950/20 p-3 hover:bg-violet-950/30 transition"
+                        >
+                          <h4 className="text-xs font-semibold text-violet-200 mb-2">Maintenance & Compliance</h4>
+                          <div className="space-y-1 text-xs text-slate-300">
+                            <div className="flex justify-between">
+                              <span>Maintenance Alerts</span>
+                              <span className="font-semibold text-violet-100">{row.maintenanceAlertsCount}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Fault Codes Found</span>
+                              <span className="font-semibold text-violet-100">{row.faultCount}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>DVIR Issues</span>
+                              <span className="font-semibold text-violet-100">{row.dvirDefectsCount}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
+
+                      {/* Event Details Section */}
+                      {expandedEventsLoading ? (
+                        <div className="rounded-md border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
+                          Loading detailed incident history...
+                        </div>
+                      ) : eventsByType && Object.keys(eventsByType).length > 0 ? (
+                        <div className="rounded-md border border-slate-700 bg-slate-950/40 p-3">
+                          <p className="mb-3 text-xs font-medium text-slate-300">Incident History ({(expandedDriverEvents as any)?.total_events || 0} incidents over {windowDays} days)</p>
+                          <div className="space-y-2 text-[11px]">
+                            {Object.entries(eventsByType)
+                              .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+                              .slice(0, 7)
+                              .map(([date, typeMap]) => (
+                                <div key={date} className="rounded-sm border border-slate-800/50 bg-slate-900/50 px-2.5 py-1.5">
+                                  <div className="mb-1 text-slate-400 font-medium">{date}</div>
+                                  <div className="text-slate-300">
+                                    {Object.entries(typeMap).map(([type, events]) => {
+                                      const count = (events as unknown[]).length;
+                                      const label = type
+                                        .replace(/_incident$/, "")
+                                        .replace(/_episode$/, "")
+                                        .replace(/_event$/, "")
+                                        .replace(/_/g, " ");
+                                      return `${count} ${label}${count !== 1 ? "s" : ""}`;
+                                    }).join("  •  ")}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </article>
               );
             })}
@@ -909,13 +1006,213 @@ export default function DriverRankingPage() {
                             <td className="px-2 py-2 text-slate-100">{row.driver}</td>
                             <td className="px-2 py-2 font-semibold text-cyan-100">{row.totalScore}</td>
                             <td className="px-2 py-2 text-slate-200">{row.faultCount}</td>
-                            <td className="px-2 py-2 text-slate-200">{row.alertCount}</td>
+                            <td className="px-2 py-2 text-slate-200">{row.maintenanceAlertsCount}</td>
                             <td className="px-2 py-2 text-slate-200">{row.speedingCount}</td>
                             <td className="px-2 py-2 text-slate-200">{Math.round(row.idleRatio * 100)}%</td>
                             <td className="px-2 py-2 text-slate-200">{row.avgFuelLevel === null ? "n/a" : `${Math.round(row.avgFuelLevel)}%`}</td>
                           </tr>
                         ))
                       )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {inspectorOpen && isHkManager ? (
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/80 p-3 backdrop-blur-sm md:items-center md:justify-center">
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl border border-violet-700/50 bg-slate-900 p-4 md:p-5">
+            <div className="flex shrink-0 items-center justify-between gap-2">
+              <div className="flex-1">
+                <h2 className="text-sm font-semibold text-violet-200">hkmanager — Data Inspector</h2>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    onClick={seedAnalyticsData}
+                    disabled={seedStatus === "loading"}
+                    className="rounded-md border border-emerald-600/70 bg-emerald-950/35 px-2.5 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-50"
+                  >
+                    {seedStatus === "loading" ? "Seeding..." : "Seed 7-Day Demo"}
+                  </button>
+                  {seedMessage && (
+                    <p
+                      className={`text-[11px] ${
+                        seedStatus === "success" ? "text-emerald-300" : "text-rose-300"
+                      }`}
+                    >
+                      {seedMessage}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setInspectorOpen(false)}
+                className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+            <p className="mt-1 shrink-0 text-[11px] text-violet-400">
+              Visible to hkmanager only. Raw payloads and pipeline debug.
+            </p>
+
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto space-y-4 pr-1">
+              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Vehicles ({vehicles.length} received)
+                </h3>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Source: /api/fleet/vehicles — driver name, location, status, fuel, speed per vehicle.
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] md:grid-cols-2">
+                  {vehicles.slice(0, 10).map((v) => (
+                    <div key={v.id} className="rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1.5">
+                      <p className="font-semibold text-slate-100">{v.truckNo} — {v.driver || <span className="text-slate-500">no driver</span>}</p>
+                      <p className="text-slate-400">Status: {v.status} | MPH: {v.mph ?? "n/a"} | Fuel: {v.fuelLevel != null ? `${v.fuelLevel}%` : "n/a"}</p>
+                      <p className="text-slate-500 truncate">{v.location}</p>
+                    </div>
+                  ))}
+                  {vehicles.length > 10 ? (
+                    <p className="col-span-2 text-slate-500">...and {vehicles.length - 10} more</p>
+                  ) : null}
+                  {vehicles.length === 0 ? (
+                    <p className="col-span-2 text-rose-300">No vehicle data received.</p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Fault/Stats Records ({faults.length} received)
+                </h3>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Source: /api/fleet/fault-codes — engine telemetry and fault codes per vehicle.
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] md:grid-cols-2">
+                  {faults.slice(0, 8).map((f, i) => {
+                    const stats = f.stats ?? {};
+                    const engineMin = pickStat(stats, ["obdEngineSeconds"]);
+                    const idleMs = pickStat(stats, ["idlingDurationMilliseconds"]);
+                    const rpm = pickStat(stats, ["engineRpm"]);
+                    const load = pickStat(stats, ["engineLoadPercent"]);
+                    const coolantMc = pickStat(stats, ["engineCoolantTemperatureMilliC"]);
+                    return (
+                      <div key={i} className="rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1.5">
+                        <p className="font-semibold text-slate-100">
+                          {f.vehicleName ?? f.vehicleId ?? `Record ${i + 1}`}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          ID: {f.vehicleId?.substring(0, 16) || "—"} | Name: {f.vehicleName || "—"}
+                        </p>
+                        <p className="text-slate-400">
+                          Faults: {countFaultCodes(f.faultCodes)} |{" "}
+                          Eng: {engineMin !== null ? `${Math.round(engineMin / 60)}min` : "n/a"} |{" "}
+                          Idle: {idleMs !== null ? `${Math.round(idleMs / 60000)}min` : "n/a"}
+                        </p>
+                        <p className="text-slate-500">
+                          RPM: {rpm ?? "n/a"} | Load: {load != null ? `${load}%` : "n/a"} | Coolant: {coolantMc != null ? `${Math.round(coolantMc / 1000)}°C` : "n/a"}
+                        </p>
+                      </div>
+                    );
+                  })}
+                  {faults.length > 8 ? (
+                    <p className="col-span-2 text-slate-500">...and {faults.length - 8} more</p>
+                  ) : null}
+                  {faults.length === 0 ? (
+                    <p className="col-span-2 text-rose-300">No fault/stats records received.</p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Driver Directory ({driverDirectory.length} entries)
+                </h3>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Source: /api/drivers — DB driver records with assigned truck unit.
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-1.5 text-[11px] md:grid-cols-3">
+                  {driverDirectory.map((d, i) => (
+                    <div key={i} className="rounded-md border border-slate-800 bg-slate-950/80 px-2 py-1.5">
+                      <p className="font-semibold text-slate-100">{d.fullName}</p>
+                      <p className="text-slate-400">Unit: {d.assignedTruckUnitNumber || <span className="text-slate-600">unassigned</span>}</p>
+                    </div>
+                  ))}
+                  {driverDirectory.length === 0 ? (
+                    <p className="col-span-3 text-rose-300">No driver directory entries.</p>
+                  ) : null}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Debug: Data Flow & Accumulator State
+                </h3>
+                <div className="mt-2 space-y-1.5 text-[11px]">
+                  <p className="text-slate-400">
+                    Vehicles: {vehicles.length} | Faults: {faults.length} | Driver Directory: {driverDirectory.length}
+                  </p>
+                  <p className="text-slate-400">
+                    Scored Drivers: {rankingRows.length}
+                  </p>
+                  <div className="mt-2 rounded-md border border-slate-800 bg-slate-950/60 p-2">
+                    <p className="text-slate-300 font-medium mb-1">First 8 Drivers: Metric Breakdown (should vary by telemetry):</p>
+                    <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                      {rankingRows.slice(0, 8).map((row, i) => (
+                        <p key={i} className="text-slate-400 font-mono text-[10px]">
+                          {i + 1}. {row.driver} ({row.trucks[0]}): Speeding={row.speedingCount} Braking={row.harshBrakingCount} Accel={row.harshAccelCount} Faults={row.faultCount} Alerts={row.maintenanceAlertsCount} Idle%={Math.round(row.idleRatio * 100)} Fuel={row.avgFuelLevel != null ? `${Math.round(row.avgFuelLevel)}%` : "n/a"}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                <h3 className="text-xs font-semibold text-slate-200">
+                  Scoring Pipeline ({rankingRows.length} drivers scored)
+                </h3>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Post-accumulation DPI scores. Check for name-merge, unit-mapping, and pillar issues.
+                </p>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="min-w-[640px] text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-500">
+                        <th className="px-2 py-1.5">Driver</th>
+                        <th className="px-2 py-1.5">Trucks</th>
+                        <th className="px-2 py-1.5">DPI</th>
+                        <th className="px-2 py-1.5">Safety</th>
+                        <th className="px-2 py-1.5">Idle</th>
+                        <th className="px-2 py-1.5">Fuel</th>
+                        <th className="px-2 py-1.5">DVIR</th>
+                        <th className="px-2 py-1.5">Maint</th>
+                        <th className="px-2 py-1.5">Faults</th>
+                        <th className="px-2 py-1.5">Alerts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rankingRows.map((row) => (
+                        <tr key={`insp-${row.key}`} className="border-b border-slate-900 last:border-b-0 hover:bg-slate-900/60">
+                          <td className="px-2 py-1.5 text-slate-100">{row.driver}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{row.trucks.join(", ")}</td>
+                          <td className="px-2 py-1.5 font-semibold text-cyan-200">{row.totalScore}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.safety)}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.idling)}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.fuel)}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.dvir)}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{Math.round(row.pillar.maintenance)}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{row.faultCount}</td>
+                          <td className="px-2 py-1.5 text-slate-300">{row.maintenanceAlertsCount}</td>
+                        </tr>
+                      ))}
+                      {rankingRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={10} className="px-2 py-3 text-rose-300">No scored rows — check accumulator pipeline.</td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>

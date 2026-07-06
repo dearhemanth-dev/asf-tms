@@ -55,6 +55,7 @@ export default function LoginPage() {
       const loginKey = sanitized.includes("@") ? sanitized.split("@")[0] : sanitized;
       const demoRoleByUser = {
         hkmaintenance: "maintenance",
+        hkmanager: "management",
         gsmanager: "management",
         gsaccounts: "accounts",
         gsmaintenance: "maintenance",
