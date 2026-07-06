@@ -203,7 +203,10 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
       {/* Event Detail Modal */}
       {modal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 md:bg-black/40" onClick={closeEventModal}>
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 md:bg-black/40" onClick={(e) => {
+          e.stopPropagation();
+          closeEventModal();
+        }}>
           <div className="w-full md:w-96 max-h-[90vh] rounded-t-xl md:rounded-xl border border-slate-600 bg-slate-900 md:max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* Sticky Header */}
             <div className="flex items-center justify-between gap-3 border-b border-slate-700 px-3 py-2 bg-slate-950">
