@@ -839,10 +839,10 @@ export default function DriverRankingPage() {
       </section>
 
       {infoOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/75 p-3 backdrop-blur-sm md:items-center md:justify-center">
-          <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 p-4 md:p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-cyan-100">DPI Methodology</h2>
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/75 p-2 backdrop-blur-sm md:items-center md:justify-center md:p-3">
+          <div className="flex max-h-[90vh] w-full max-w-xs flex-col rounded-2xl border border-slate-700 bg-slate-900 md:max-w-2xl">
+            <div className="sticky top-0 flex shrink-0 items-center justify-between border-b border-slate-700 bg-slate-900 p-3 md:p-4">
+              <h2 className="text-sm font-semibold text-cyan-100 md:text-base">DPI Methodology</h2>
               <button
                 onClick={() => setInfoOpen(false)}
                 className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
@@ -850,42 +850,44 @@ export default function DriverRankingPage() {
                 Close
               </button>
             </div>
-            <p className="mt-3 text-sm text-slate-300">
-              DPI is a weighted composite score to help owner-level reward and disciplinary decisions. The score is
-              normalized to 0-100 and combines five operational pillars.
-            </p>
-            <p className="mt-2 rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 text-sm font-medium text-cyan-100">
-              {weightedFormula}
-            </p>
-            <ul className="mt-3 space-y-2 text-sm text-slate-300">
-              <li>Safety: event pressure from alerts, speeding, and fault load.</li>
-              <li>Idling: idle exposure against active engine runtime.</li>
-              <li>Fuel: low-fuel behavior and consumption discipline signals.</li>
-              <li>DVIR/Compliance: recurring fault burden and compliance pressure.</li>
-              <li>Maintenance: engine stress indicators from telemetry.</li>
-            </ul>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {PILLARS.map((pillar) => (
-                <article key={pillar.key} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs font-semibold text-slate-100">{pillar.title}</h3>
-                    <span className="rounded-full border border-cyan-800/60 bg-cyan-900/30 px-2 py-0.5 text-[10px] text-cyan-200">
-                      {pillar.weight}%
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[11px] text-slate-300">{pillar.summary}</p>
-                  <p className="mt-1 text-[11px] text-slate-400">{pillar.hint}</p>
-                </article>
-              ))}
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-4 md:py-4">
+              <p className="text-sm text-slate-300">
+                DPI is a weighted composite score to help owner-level reward and disciplinary decisions. The score is
+                normalized to 0-100 and combines five operational pillars.
+              </p>
+              <p className="mt-2 rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 text-[11px] font-medium text-cyan-100 md:text-sm">
+                {weightedFormula}
+              </p>
+              <ul className="mt-3 space-y-2 text-sm text-slate-300">
+                <li>Safety: event pressure from alerts, speeding, and fault load.</li>
+                <li>Idling: idle exposure against active engine runtime.</li>
+                <li>Fuel: low-fuel behavior and consumption discipline signals.</li>
+                <li>DVIR/Compliance: recurring fault burden and compliance pressure.</li>
+                <li>Maintenance: engine stress indicators from telemetry.</li>
+              </ul>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {PILLARS.map((pillar) => (
+                  <article key={pillar.key} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-slate-100">{pillar.title}</h3>
+                      <span className="rounded-full border border-cyan-800/60 bg-cyan-900/30 px-2 py-0.5 text-[10px] text-cyan-200">
+                        {pillar.weight}%
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-300">{pillar.summary}</p>
+                    <p className="mt-1 text-[11px] text-slate-400">{pillar.hint}</p>
+                  </article>
+                ))}
+              </div>
+              <p className="mt-3 rounded-md border border-slate-700 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
+                The live snapshot is directional and best used for weekly action reviews. For payroll-impact actions,
+                pair this with verified incident and policy records.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">
+                Management usage: reward consistent top performers, coach monitor-tier drivers, and execute immediate
+                intervention plans for low-score drivers.
+              </p>
             </div>
-            <p className="mt-3 rounded-md border border-slate-700 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
-              The live snapshot is directional and best used for weekly action reviews. For payroll-impact actions,
-              pair this with verified incident and policy records.
-            </p>
-            <p className="mt-2 text-xs text-slate-400">
-              Management usage: reward consistent top performers, coach monitor-tier drivers, and execute immediate
-              intervention plans for low-score drivers.
-            </p>
           </div>
         </div>
       ) : null}
