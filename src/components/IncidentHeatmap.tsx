@@ -137,7 +137,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
         </p>
 
         {/* Heatmap */}
-        <div className="space-y-2 overflow-x-auto">
+        <div className="space-y-2 overflow-x-auto" onClick={(e) => e.stopPropagation()}>
           {/* Header row with week labels */}
           <div className="flex gap-1">
             <div className="w-24 flex-shrink-0 text-[10px] font-semibold text-slate-500">
@@ -181,11 +181,20 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                       <button
                         key={idx}
                         onClick={(e) => {
+                          e.preventDefault();
                           e.stopPropagation();
                           openEventModal(cell);
                         }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
+                        onTouchStart={(e) => {
+                          e.stopPropagation();
+                        }}
                         className={`w-16 flex-shrink-0 h-8 rounded border flex items-center justify-center text-[11px] font-semibold transition-colors ${bgClass}`}
                         disabled={cell.count === 0}
+                        type="button"
                       >
                         {cell.count > 0 ? cell.count : "—"}
                       </button>
