@@ -239,29 +239,35 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
             {/* Scrollable Event List */}
             <div className="flex-1 overflow-y-auto space-y-2 p-3">
-              {modal.events.map((event, idx) => (
+              {modal.events.map((event, idx) => {
+                const resolved = event.latitude && event.longitude 
+                  ? reverseGeocodeCoordinates(
+                      event.latitude,
+                      event.longitude,
+                      event.details.location
+                    )
+                  : null;
+
+                return (
                 <div
                   key={idx}
-                  className="rounded border border-slate-700/50 bg-slate-800/30 px-2.5 py-1.5"
+                  className="rounded border border-slate-700/50 bg-slate-800/30 px-2.5 py-2"
                 >
-                  {/* Timestamp and location */}
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <div>
-                      <p className="text-[11px] font-semibold text-slate-200">
-                        {formatEventTime(event.event_timestamp)}
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        {formatEventDate(event.event_date)}
-                      </p>
-                    </div>
+                  {/* Compact header: Time • Date • Truck [Severity] */}
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-[10px] text-slate-300 flex-1">
+                      <span className="font-semibold">{formatEventTime(event.event_timestamp)}</span>
+                      <span className="text-slate-500"> • {formatEventDate(event.event_date)}</span>
+                      <span className="text-slate-500"> • Unit {event.truck_unit_number}</span>
+                    </p>
                     {event.details.severity && (
                       <span
-                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                        className={`text-[9px] font-medium px-2 py-0.5 rounded-sm flex-shrink-0 ${
                           event.details.severity === "high"
-                            ? "bg-rose-900/40 text-rose-300"
+                            ? "bg-rose-900/50 text-rose-200"
                             : event.details.severity === "moderate"
-                              ? "bg-amber-900/40 text-amber-300"
-                              : "bg-slate-700/40 text-slate-300"
+                              ? "bg-amber-900/50 text-amber-200"
+                              : "bg-slate-700/50 text-slate-200"
                         }`}
                       >
                         {event.details.severity}
@@ -269,52 +275,43 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     )}
                   </div>
 
-                  {/* Location with GPS Resolution */}
-                  {event.details.location && (
-                    <p className="text-[10px] text-slate-400 mb-1">
-                      <span className="font-medium">Location:</span> {event.details.location}
+                  {/* Location & Region (combined) */}
+                  {resolved ? (
+                    <p className="text-[10px] text-slate-200 mb-2 leading-snug">
+                      {formatResolvedLocation(resolved)}
+                      {event.details.location && event.details.location !== "Unknown" && (
+                        <span className="text-slate-500"> • {event.details.location}</span>
+                      )}
+                    </p>
+                  ) : event.details.location ? (
+                    <p className="text-[10px] text-slate-300 mb-2">
+                      {event.details.location}
+                    </p>
+                  ) : null}
+
+                  {/* Speed & Description on same line if both exist */}
+                  <div className="flex gap-3 text-[10px]">
+                    {event.details.speed && (
+                      <span className="text-slate-400">
+                        <span className="font-medium">Speed:</span> {event.details.speed} mph
+                      </span>
+                    )}
+                    {event.details.description && (
+                      <span className="text-slate-400 flex-1">
+                        {event.details.description}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Optional Coordinates (tooltip-like) - hidden on mobile, shown on hover */}
+                  {resolved && event.latitude && event.longitude && (
+                    <p className="text-[9px] text-slate-600 mt-1 opacity-60 hover:opacity-100 transition">
+                      GPS: {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
                     </p>
                   )}
-
-                  {/* Resolved GPS Location */}
-                  {event.latitude && event.longitude && (() => {
-                    const resolved = reverseGeocodeCoordinates(
-                      event.latitude,
-                      event.longitude,
-                      event.details.location
-                    );
-                    return (
-                      <>
-                        <p className="text-[10px] text-slate-500 mb-1">
-                          <span className="font-medium">Region:</span> {formatResolvedLocation(resolved)}
-                        </p>
-                        <p className="text-[10px] text-slate-600">
-                          <span className="font-medium">Coordinates:</span> {(event.latitude as number).toFixed(4)}°, {(event.longitude as number).toFixed(4)}°
-                        </p>
-                      </>
-                    );
-                  })()}
-
-                  {/* Speed */}
-                  {event.details.speed && (
-                    <p className="text-[10px] text-slate-400 mb-1">
-                      <span className="font-medium">Speed:</span> {event.details.speed} mph
-                    </p>
-                  )}
-
-                  {/* Description */}
-                  {event.details.description && (
-                    <p className="text-[10px] text-slate-400">
-                      <span className="font-medium">Details:</span> {event.details.description}
-                    </p>
-                  )}
-
-                  {/* Truck unit */}
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Truck: {event.truck_unit_number}
-                  </p>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </div>
         </div>
