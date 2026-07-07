@@ -8,6 +8,7 @@ import {
   formatEventTime,
   formatEventDate,
   getIncidentTypeColor,
+  getEventCategory,
 } from "@/lib/analytics/incident-heatmap";
 import { reverseGeocodeCoordinates, formatResolvedLocation } from "@/lib/gps-reverse-geocode";
 
@@ -88,6 +89,20 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
   const incidentTypes = Array.from(new Set(cells.map((c) => c.incidentType))).sort();
   const weeks = Array.from(new Set(cells.map((c) => c.weekLabel)));
 
+  // Group incident types by category
+  const incidentsByCategory = incidentTypes.reduce((acc, type) => {
+    const category = getEventCategory(type);
+    if (!acc[category.key]) {
+      acc[category.key] = { label: category.label, color: category.color, types: [] };
+    }
+    acc[category.key].types.push(type);
+    return acc;
+  }, {} as Record<string, { label: string; color: string; types: string[] }>);
+
+  // Sort categories for consistent display
+  const categoryOrder = ["safety", "efficiency", "fuel", "maintenance", "other"];
+  const sortedCategories = categoryOrder.filter((key) => incidentsByCategory[key]);
+
   // Get unique weeks in order (reverse chronological)
   const uniqueWeeks = Array.from(
     new Map(
@@ -155,52 +170,80 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
             </div>
           </div>
 
-          {/* Heatmap rows */}
-          {incidentTypes.map((incidentType) => {
-            const typeColor = getIncidentTypeColor(incidentType);
+          {/* Heatmap rows by category */}
+          {sortedCategories.map((categoryKey) => {
+            const category = incidentsByCategory[categoryKey];
+            const categoryColor = category.color;
+            const categoryColorMap: Record<string, string> = {
+              rose: "rose",
+              amber: "amber",
+              cyan: "cyan",
+              violet: "violet",
+              slate: "slate",
+            };
+            const colorClass = categoryColorMap[categoryColor] || "slate";
+
             return (
-              <div key={incidentType} className="flex gap-1">
-                <div className="w-24 flex-shrink-0 text-[11px] text-slate-400">
-                  {normalizeEventTypeName(incidentType)}
+              <div key={categoryKey} className="space-y-1">
+                {/* Category Header */}
+                <div className={`flex items-center gap-2 px-2 py-1 mt-2 rounded border border-${colorClass}-700/30 bg-${colorClass}-950/15`}>
+                  <span className={`text-[11px] font-semibold text-${colorClass}-300`}>
+                    {category.label}
+                  </span>
+                  <span className={`text-[10px] text-${colorClass}-400`}>
+                    ({category.types.length} metric{category.types.length !== 1 ? "s" : ""})
+                  </span>
                 </div>
-                <div className="flex gap-1">
-                  {uniqueWeeks.map((weekLabel, idx) => {
-                    const cell = getCellData(incidentType, weekLabel);
-                    if (!cell) {
-                      return (
-                        <div
-                          key={idx}
-                          className="w-16 flex-shrink-0 h-8 rounded border border-slate-800/30 bg-slate-900/20"
-                        />
-                      );
-                    }
 
-                    const bgClass = getCellClassForIntensity(typeColor, cell.intensity);
+                {/* Rows for this category */}
+                {category.types.map((incidentType) => {
+                  const typeColor = getIncidentTypeColor(incidentType);
+                  return (
+                    <div key={incidentType} className="flex gap-1">
+                      <div className="w-24 flex-shrink-0 text-[11px] text-slate-400">
+                        {normalizeEventTypeName(incidentType)}
+                      </div>
+                      <div className="flex gap-1">
+                        {uniqueWeeks.map((weekLabel, idx) => {
+                          const cell = getCellData(incidentType, weekLabel);
+                          if (!cell) {
+                            return (
+                              <div
+                                key={idx}
+                                className="w-16 flex-shrink-0 h-8 rounded border border-slate-800/30 bg-slate-900/20"
+                              />
+                            );
+                          }
 
-                    return (
-                      <button
-                        key={idx}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          openEventModal(cell);
-                        }}
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                        }}
-                        onTouchStart={(e) => {
-                          e.stopPropagation();
-                        }}
-                        className={`w-16 flex-shrink-0 h-8 rounded border flex items-center justify-center text-[11px] font-semibold transition-colors ${bgClass}`}
-                        disabled={cell.count === 0}
-                        type="button"
-                      >
-                        {cell.count > 0 ? cell.count : "—"}
-                      </button>
-                    );
-                  })}
-                </div>
+                          const bgClass = getCellClassForIntensity(typeColor, cell.intensity);
+
+                          return (
+                            <button
+                              key={idx}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                openEventModal(cell);
+                              }}
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                              }}
+                              onTouchStart={(e) => {
+                                e.stopPropagation();
+                              }}
+                              className={`w-16 flex-shrink-0 h-8 rounded border flex items-center justify-center text-[11px] font-semibold transition-colors ${bgClass}`}
+                              disabled={cell.count === 0}
+                              type="button"
+                            >
+                              {cell.count > 0 ? cell.count : "—"}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}

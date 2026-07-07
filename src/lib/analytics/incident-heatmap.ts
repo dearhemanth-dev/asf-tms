@@ -180,6 +180,28 @@ export function formatEventDate(dateStr: string): string {
 }
 
 /**
+ * Get category for event type (for unified heatmap grouping)
+ */
+export function getEventCategory(eventType: string): { key: string; label: string; color: string } {
+  const typeLower = eventType.toLowerCase();
+  
+  if (typeLower.includes("brake") || typeLower.includes("accel") || typeLower.includes("corner") || typeLower.includes("speeding")) {
+    return { key: "safety", label: "Safety", color: "rose" };
+  }
+  if (typeLower.includes("idle")) {
+    return { key: "efficiency", label: "Efficiency", color: "amber" };
+  }
+  if (typeLower.includes("fuel")) {
+    return { key: "fuel", label: "Fuel Performance", color: "cyan" };
+  }
+  if (typeLower.includes("fault") || typeLower.includes("dvir") || typeLower.includes("maintenance") || 
+      typeLower.includes("temp") || typeLower.includes("oil") || typeLower.includes("rpm") || typeLower.includes("load")) {
+    return { key: "maintenance", label: "Maintenance & Compliance", color: "violet" };
+  }
+  return { key: "other", label: "Other", color: "slate" };
+}
+
+/**
  * Normalize event type name for display (e.g., "harsh_brake_incident" -> "Harsh Brake")
  */
 export function normalizeEventTypeName(eventType: string): string {
@@ -197,19 +219,8 @@ export function normalizeEventTypeName(eventType: string): string {
  * Get color class for incident type
  */
 export function getIncidentTypeColor(eventType: string): string {
-  if (eventType.includes("brake") || eventType.includes("corner") || eventType.includes("accel")) {
-    return "rose"; // Safety-related
-  }
-  if (eventType.includes("idle") || eventType.includes("efficiency")) {
-    return "amber"; // Efficiency-related
-  }
-  if (eventType.includes("fuel")) {
-    return "cyan"; // Fuel-related
-  }
-  if (eventType.includes("fault") || eventType.includes("dvir") || eventType.includes("maintenance")) {
-    return "violet"; // Compliance-related
-  }
-  return "slate"; // Default
+  const category = getEventCategory(eventType);
+  return category.color;
 }
 
 /**

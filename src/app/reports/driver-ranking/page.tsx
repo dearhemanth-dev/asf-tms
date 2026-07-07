@@ -402,8 +402,6 @@ export default function DriverRankingPage() {
     query_time_ms: number;
   } | null>(null);
   const [expandedEventsLoading, setExpandedEventsLoading] = useState(false);
-  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  // Drill-down UX refactor: organized by business impact categories
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -729,86 +727,7 @@ export default function DriverRankingPage() {
 
                   {isExpanded && (
                     <div className="mt-4 space-y-3 border-t border-slate-700/40 pt-4">
-                      {/* Category Cards - Organized by Business Impact */}
-                      <div className="grid gap-2 md:grid-cols-2">
-                        {/* Safety Issues */}
-                        <div 
-                          onClick={() => setExpandedCategory(expandedCategory === 'safety' ? null : 'safety')}
-                          className="cursor-pointer rounded-lg border border-rose-700/40 bg-rose-950/20 p-3 hover:bg-rose-950/30 transition"
-                        >
-                          <h4 className="text-xs font-semibold text-rose-200 mb-2">Safety Issues</h4>
-                          <div className="space-y-1 text-xs text-slate-300">
-                            <div className="flex justify-between">
-                              <span>Speeding Violations</span>
-                              <span className="font-semibold text-rose-100">{row.speedingCount}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Harsh Braking Events</span>
-                              <span className="font-semibold text-rose-100">{row.harshBrakingCount}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Rapid Acceleration Events</span>
-                              <span className="font-semibold text-rose-100">{row.harshAccelCount}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Efficiency Issues */}
-                        <div 
-                          onClick={() => setExpandedCategory(expandedCategory === 'efficiency' ? null : 'efficiency')}
-                          className="cursor-pointer rounded-lg border border-amber-700/40 bg-amber-950/20 p-3 hover:bg-amber-950/30 transition"
-                        >
-                          <h4 className="text-xs font-semibold text-amber-200 mb-2">Efficiency</h4>
-                          <div className="space-y-1 text-xs text-slate-300">
-                            <div className="flex justify-between">
-                              <span>Idle Time (% of engine)</span>
-                              <span className="font-semibold text-amber-100">{Math.round(row.idleRatio * 100)}%</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Fuel Management */}
-                        <div 
-                          onClick={() => setExpandedCategory(expandedCategory === 'fuel' ? null : 'fuel')}
-                          className="cursor-pointer rounded-lg border border-cyan-700/40 bg-cyan-950/20 p-3 hover:bg-cyan-950/30 transition"
-                        >
-                          <h4 className="text-xs font-semibold text-cyan-200 mb-2">Fuel Performance</h4>
-                          <div className="space-y-1 text-xs text-slate-300">
-                            <div className="flex justify-between">
-                              <span>Avg Tank Level</span>
-                              <span className="font-semibold text-cyan-100">{row.avgFuelLevel === null ? "N/A" : `${Math.round(row.avgFuelLevel)}%`}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Low Fuel Events</span>
-                              <span className="font-semibold text-cyan-100">{row.lowFuelEventsCount}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Maintenance & Compliance */}
-                        <div 
-                          onClick={() => setExpandedCategory(expandedCategory === 'compliance' ? null : 'compliance')}
-                          className="cursor-pointer rounded-lg border border-violet-700/40 bg-violet-950/20 p-3 hover:bg-violet-950/30 transition"
-                        >
-                          <h4 className="text-xs font-semibold text-violet-200 mb-2">Maintenance & Compliance</h4>
-                          <div className="space-y-1 text-xs text-slate-300">
-                            <div className="flex justify-between">
-                              <span>Maintenance Alerts</span>
-                              <span className="font-semibold text-violet-100">{row.maintenanceAlertsCount}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Fault Codes Found</span>
-                              <span className="font-semibold text-violet-100">{row.faultCount}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>DVIR Issues</span>
-                              <span className="font-semibold text-violet-100">{row.dvirDefectsCount}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Event Details Section - Weekly Incident Heatmap */}
+                      {/* Unified Incident History Heatmap */}
                       {expandedEventsLoading ? (
                         <div className="rounded-md border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
                           Loading detailed incident history...
