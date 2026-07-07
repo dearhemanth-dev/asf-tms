@@ -397,16 +397,24 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         )}
                       </span>
                     ) : null}
-                    {/* Priority 2: Idling (fuel waste) */}
+                    {/* Priority 2: Idling (fuel waste) - Manager framing: COST first */}
                     {event.event_type === "idling_episode" ? (() => {
-                      const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
-                      const idlePct = (event.details.idle_percentage as number) ?? Math.round(event.metric_value * 100);
+                      const idlingGallons = (event.details.fuel_wasted_gallons as number) ?? 0;
+                      const costImpact = (event.details.cost_impact_usd as number) ?? 0;
+                      const idlePct = (event.details.idle_percentage_of_engine_time as number) ?? 0;
+                      const co2Lbs = (event.details.co2_equivalent_lbs as number) ?? 0;
+                      
                       return (
-                        <span className="text-slate-400 flex-1">
-                          <span className="font-medium text-amber-400">{idleMins} min</span> idle
-                          {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
-                          {" "}<span className="text-slate-500">| Ideal: 0 min</span>
-                        </span>
+                        <div className="flex-1">
+                          <p className="text-slate-400">
+                            <span className="font-medium text-amber-300">Fuel Waste</span> {" "}
+                            <span className="font-medium text-amber-200">{idlingGallons} gal</span>
+                            {" "} @ <span className="font-medium text-amber-200">${costImpact}</span>
+                          </p>
+                          <p className="text-slate-500 text-[9px] mt-0.5">
+                            {idlePct}% of shift idling ({(event.details.idling_hours as number)?.toFixed(1)}h) — CO₂: {co2Lbs} lbs
+                          </p>
+                        </div>
                       );
                     })() : null}
                     {/* Priority 3: Safety incidents (insurance/maintenance costs) */}

@@ -589,6 +589,45 @@ function generateEventRecords(
     longitude: fuelCoords.longitude,
   });
 
+  // Idling events - Daily aggregated view (manager-focused: cost & impact)
+  if (metrics.idling_minutes > 0) {
+    const idlingHours = metrics.idling_minutes / 60;
+    const idlingGallonsWasted = Math.round(idlingHours * 0.35 * 100) / 100; // 0.35 gal/hour idle burn rate
+    const idlePercentage = Math.round((metrics.idling_minutes / metrics.engine_minutes) * 1000) / 10; // % with 1 decimal
+    const fuelCostImpact = Math.round(idlingGallonsWasted * 3.5 * 100) / 100; // $3.50/gal diesel
+    const co2Equivalent = Math.round(idlingGallonsWasted * 22.4 * 10) / 10; // 22.4 lbs CO2 per gallon
+    
+    const idleCoords = getEventCoordinates("idling_episode", driverId, dayOffset, 0);
+    events.push({
+      tenant_id: tenantId,
+      driver_id: driverId,
+      truck_unit_number: truckUnit,
+      event_date: snapshotDate,
+      event_timestamp: createTimestamp(23, 30),
+      event_type: "idling_episode",
+      metric_value: metrics.idling_minutes,
+      event_count: null,
+      duration_minutes: metrics.idling_minutes,
+      data_source: "demo_seed",
+      source_id: `demo_idling_${snapshotDate}`,
+      status: "confirmed",
+      details: {
+        total_idling_minutes: metrics.idling_minutes,
+        idle_percentage_of_engine_time: idlePercentage,
+        idling_hours: Math.round(idlingHours * 10) / 10,
+        engine_minutes: metrics.engine_minutes,
+        fuel_wasted_gallons: idlingGallonsWasted,
+        cost_impact_usd: fuelCostImpact,
+        co2_equivalent_lbs: co2Equivalent,
+        severity: idlePercentage > 25 ? "high" : idlePercentage > 15 ? "medium" : "low",
+        location: "Daily shift",
+        description: `${Math.round(idlingHours * 10) / 10}h idle (${idlePercentage}% of shift) • ${idlingGallonsWasted} gal wasted • $${fuelCostImpact} cost`,
+      },
+      latitude: idleCoords.latitude,
+      longitude: idleCoords.longitude,
+    });
+  }
+
   // DVIR defects
   if (metrics.dvir_defects_count > 0) {
     const coords = getEventCoordinates("dvir_defect", driverId, dayOffset, 0);
