@@ -107,6 +107,7 @@ type DriverScoreRow = {
   lastLocation: string;
   totalScore: number;
   tier: "top_performer" | "on_track" | "action_needed";
+  percentile?: number;
   pillar: PillarScores;
   speedingCount: number;
   harshBrakingCount: number;
@@ -321,7 +322,8 @@ function scoreDriverFromAnalytics(
     pillar.maintenance * (weights.maintenance / 100);
 
   const roundedTotal = Math.round(totalScore);
-  const tier: DriverScoreRow["tier"] = roundedTotal >= 82 ? "top_performer" : roundedTotal >= 67 ? "on_track" : "action_needed";
+  // Tier will be assigned by percentile after all drivers are scored
+  const tier: DriverScoreRow["tier"] = "on_track"; // Placeholder, reassigned later
 
   const weakest = Object.entries(pillar).sort((a, b) => a[1] - b[1])[0]?.[0] ?? "safety";
   const riskSummary =
@@ -361,20 +363,20 @@ function tierStyles(tier: DriverScoreRow["tier"]) {
     return {
       badge: "border-emerald-500/70 bg-emerald-900/30 text-emerald-200",
       card: "border-emerald-700/40",
-      label: "Top Performer",
+      label: "Top 10%",
     };
   }
   if (tier === "action_needed") {
     return {
       badge: "border-rose-500/70 bg-rose-900/35 text-rose-200",
       card: "border-rose-700/40",
-      label: "Action Needed",
+      label: "Below Avg",
     };
   }
   return {
-    badge: "border-amber-500/70 bg-amber-900/25 text-amber-200",
-    card: "border-amber-700/35",
-    label: "On Track",
+    badge: "border-slate-500/70 bg-slate-800/30 text-slate-300",
+    card: "border-slate-700/40",
+    label: "Average",
   };
 }
 
@@ -500,9 +502,28 @@ export default function DriverRankingPage() {
       return [];
     }
 
-    return analyticsData
+    const rows = analyticsData
       .map((metrics) => scoreDriverFromAnalytics(metrics, multiplier, DEFAULT_WEIGHTS))
       .sort((a, b) => b.totalScore - a.totalScore);
+
+    // Assign percentile-based tiers
+    if (rows.length > 0) {
+      const count = rows.length;
+      rows.forEach((row, index) => {
+        const percentile = ((index + 1) / count) * 100;
+        
+        if (percentile <= 10) {
+          row.tier = "top_performer"; // Top 10%
+        } else if (percentile <= 50) {
+          row.tier = "on_track"; // Average (Top 25% to 50th percentile)
+        } else {
+          row.tier = "action_needed"; // Below average
+        }
+        row.percentile = percentile;
+      });
+    }
+
+    return rows;
   }, [analyticsData, windowDays]);
 
   const summary = useMemo(() => {
@@ -648,11 +669,11 @@ export default function DriverRankingPage() {
             <p className="mt-1 text-2xl font-semibold text-slate-100">{summary.drivers}</p>
           </article>
           <article className="rounded-xl border border-emerald-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Top Performers</p>
+            <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Top 10%</p>
             <p className="mt-1 text-2xl font-semibold text-emerald-200">{summary.topPerformers}</p>
           </article>
           <article className="rounded-xl border border-rose-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Action Needed</p>
+            <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Below Average</p>
             <p className="mt-1 text-2xl font-semibold text-rose-200">{summary.actionNeeded}</p>
           </article>
           <article className="rounded-xl border border-cyan-700/35 bg-slate-900/65 p-3">
