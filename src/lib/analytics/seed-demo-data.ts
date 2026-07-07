@@ -537,6 +537,7 @@ function generateEventRecords(
         events: metrics.low_fuel_events,
         location: "Fuel station",
         description: `Fuel level dropped to ${Math.round(metrics.avg_fuel_level)}% (${metrics.low_fuel_events} alert(s))`,
+        fuel_efficiency_mpg: (5.5 + Math.random() * 2).toFixed(1), // Realistic truck range: 5-7.5 MPG
       },
       latitude: coords.latitude,
       longitude: coords.longitude,

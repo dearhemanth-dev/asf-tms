@@ -26,6 +26,8 @@ export interface EventDetail {
     engine_hours?: number;
     gforce_magnitude?: number; // Harsh braking/accel: actual G-force value
     samsara_severity_score?: number; // Samsara's calculated severity (0-10)
+    fuel_efficiency_mpg?: string | number; // Fuel efficiency in MPG for low fuel incidents
+    fuel_level_percent?: number; // Fuel level percentage when incident occurred
     [key: string]: unknown;
   };
   metric_value: number;
