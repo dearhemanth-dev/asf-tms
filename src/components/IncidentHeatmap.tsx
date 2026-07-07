@@ -97,12 +97,6 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
     ).values()
   );
 
-  // Filter out event types that are not displayed on heatmap
-  // (e.g., fuel_consumption was removed per data availability audit)
-  const displayableIncidentTypes = incidentTypes.filter(
-    (type) => type !== "fuel_consumption"
-  );
-
   const getCellData = (incidentType: string, weekLabel: string): HeatmapCell | undefined => {
     return cells.find((c) => c.incidentType === incidentType && c.weekLabel === weekLabel);
   };
@@ -162,7 +156,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
           </div>
 
           {/* Heatmap rows */}
-          {displayableIncidentTypes.map((incidentType) => {
+          {incidentTypes.map((incidentType) => {
             const typeColor = getIncidentTypeColor(incidentType);
             return (
               <div key={incidentType} className="flex gap-1">

@@ -64,6 +64,19 @@ export interface ELDFuelLevel {
   data_source: string;
 }
 
+export interface ELDDriverEfficiency {
+  driver_id: string;
+  date: string; // YYYY-MM-DD
+  distance_miles: number;
+  fuel_consumed_gallons: number;
+  driving_time_minutes: number;
+  idling_fuel_wasted_gallons: number; // Fuel consumed while stationary
+  mpg: number; // Miles per gallon (calculated: distance / fuel)
+  cruise_control_percent: number; // % of time cruise control was active
+  green_band_driving_percent: number; // % of time in optimal RPM range
+  data_source: string;
+}
+
 export interface ELDSnapshot {
   driver_id: string;
   snapshot_date: string; // YYYY-MM-DD
@@ -137,6 +150,28 @@ export interface ELDProvider {
   ): Promise<ELDFuelLevel[]>;
 
   /**
+   * Get driver efficiency metrics (MPG, fuel consumed, driving behavior)
+   * ACTUAL fuel consumption data from Samsara driver-efficiency endpoints
+   * 
+   * Provides:
+   * - Distance covered (miles)
+   * - Fuel consumed (gallons) — CUMULATIVE for the day/period
+   * - Fuel wasted while idle (gallons)
+   * - MPG (miles per gallon)
+   * - Cruise control usage % (for fuel optimization)
+   * - Green band driving % (optimal RPM range for efficiency)
+   * 
+   * Samsara Endpoints:
+   * - GET /driver-efficiency/drivers
+   * - GET /fleet/reports/drivers/fuel-energy
+   */
+  getDriverEfficiency(
+    driverId: string,
+    startDate: string, // YYYY-MM-DD
+    endDate: string    // YYYY-MM-DD
+  ): Promise<ELDDriverEfficiency[]>;
+
+  /**
    * Get daily aggregated snapshot (optional optimization)
    */
   getSnapshot?(
@@ -205,6 +240,17 @@ export class SamsaraProvider implements ELDProvider {
     throw new Error("Not implemented - requires Samsara integration");
   }
 
+  async getDriverEfficiency(
+    driverId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<ELDDriverEfficiency[]> {
+    // Samsara: GET /driver-efficiency/drivers or GET /fleet/reports/drivers/fuel-energy
+    // Returns: distance_miles, fuel_consumed_gallons, mpg, cruise_control_%, green_band_%
+    // THIS IS ACTUAL FUEL DATA from Samsara, not inferred or assumed
+    throw new Error("Not implemented - requires Samsara integration");
+  }
+
   async lookupVehicleByVIN(vin: string): Promise<Partial<ELDVehicle> | null> {
     // Samsara: GET /fleet/vehicles/vin/{vin}
     // Or fallback to NHTSA VIN decoder + fuel tank database
@@ -243,6 +289,14 @@ export class GeotabProvider implements ELDProvider {
     startDate: string,
     endDate: string
   ): Promise<ELDFuelLevel[]> {
+    throw new Error("Geotab provider not yet implemented");
+  }
+
+  async getDriverEfficiency(
+    driverId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<ELDDriverEfficiency[]> {
     throw new Error("Geotab provider not yet implemented");
   }
 }

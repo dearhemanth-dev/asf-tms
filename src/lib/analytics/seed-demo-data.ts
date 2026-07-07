@@ -441,13 +441,50 @@ function generateEventRecords(
     });
   }
 
-  // NOTE: Fuel consumption removed per data availability audit (SAMSARA_DATA_AUDIT.md)
-  // Samsara does not provide fuel consumption data; cannot be calculated reliably without:
-  // 1. Vehicle fuel tank capacity (must be stored in vehicles table via VIN lookup)
-  // 2. Two-point fuel level comparison (previous vs. current tank %)
-  // Use low_fuel_incident events above for fuel level % alerts instead.
-  // Future: When vehicles.fuel_tank_capacity_gallons is populated, can calculate:
-  //   consumed = (level_start% - level_end%) * vehicle.fuel_tank_capacity_gallons
+  // Fuel Consumption (from driver-efficiency metrics)
+  // Samsara endpoints: GET /driver-efficiency/drivers, GET /fleet/reports/drivers/fuel-energy
+  // Data: Distance covered + actual fuel consumed = calculated MPG
+  // Realistic truck metrics: 5-7 MPG typical
+  
+  // Deterministic distance per driver per day (miles)
+  const hashBase = parseInt(driverId.split("-")[4], 16) || 500;
+  const distanceMiles = 300 + ((hashBase + dayOffset * 7) % 250); // 300-550 miles
+  const mpg = 5.5 + ((hashBase % 40) / 40); // 5.5 - 5.9 MPG realistic range
+  const fuelGallons = Math.round((distanceMiles / mpg) * 100) / 100;
+  
+  // Idle fuel waste (fuel burned while stationary)
+  const idleFuelWasted = Math.round(metrics.idling_minutes / 60 * 0.3 * 100) / 100; // ~0.3 gal/hour idle
+  
+  const fuelCoords = getEventCoordinates("fuel_consumption", driverId, dayOffset, 0);
+  const engineHours = Math.round(metrics.engine_minutes / 60);
+  
+  events.push({
+    tenant_id: tenantId,
+    driver_id: driverId,
+    truck_unit_number: truckUnit,
+    event_date: snapshotDate,
+    event_timestamp: createTimestamp(23, 0),
+    event_type: "fuel_consumption",
+    metric_value: fuelGallons,
+    event_count: null,
+    duration_minutes: null,
+    data_source: "demo_seed",
+    source_id: `demo_fuel_consumption_${snapshotDate}`,
+    status: "confirmed",
+    details: {
+      distance_miles: distanceMiles,
+      gallons_consumed: fuelGallons,
+      mpg: mpg,
+      engine_hours: engineHours,
+      idling_fuel_wasted_gallons: idleFuelWasted,
+      cruise_control_percent: Math.round(15 + (dayOffset % 30)), // 15-45% cruise usage
+      green_band_driving_percent: Math.round(40 + (dayOffset % 45)), // 40-85% optimal RPM
+      location: "Daily route",
+      description: `${distanceMiles} mi • ${fuelGallons} gal @ ${mpg.toFixed(1)} MPG • ${engineHours}h active`,
+    },
+    latitude: fuelCoords.latitude,
+    longitude: fuelCoords.longitude,
+  });
 
   // DVIR defects
   if (metrics.dvir_defects_count > 0) {
