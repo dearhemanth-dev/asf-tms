@@ -359,6 +359,10 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                       <span className="text-slate-400 flex-1">
                         {event.details.gforce_magnitude !== undefined && (
                           <>
+                            <span className="font-medium text-rose-100">
+                              {event.event_type === "harsh_brake_incident" ? "Hard braking" : "Harsh acceleration"}:
+                            </span>
+                            {" "}
                             <span className="font-medium text-rose-300">
                               {event.details.gforce_magnitude.toFixed(2)}G
                             </span>
