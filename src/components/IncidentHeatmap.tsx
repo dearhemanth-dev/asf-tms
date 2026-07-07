@@ -313,13 +313,23 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     </p>
                   ) : null}
 
-                  {/* Speed & Description on same line if both exist */}
-                  <div className="flex gap-3 text-[10px]">
-                    {event.details.speed && (
-                      <span className="text-slate-400">
-                        <span className="font-medium">Speed:</span> {event.details.speed} mph
+                  {/* Duration, Speed & Description */}
+                  <div className="flex gap-3 text-[10px] flex-wrap">
+                    {event.event_type === "speeding_incident" ? (
+                      <span className="text-slate-400 flex-1">
+                        {event.details.description && (
+                          <>
+                            <span className="font-medium text-rose-300">{event.duration_minutes} min</span> at{" "}
+                            <span className="font-medium text-rose-300">{event.details.speed} mph</span>
+                            {event.details.posted_limit ? (
+                              <>
+                                {" in "}<span className="text-slate-300">{event.details.posted_limit} zone</span>
+                              </>
+                            ) : null}
+                          </>
+                        )}
                       </span>
-                    )}
+                    ) : null}
                     {event.event_type === "idling_episode" ? (() => {
                       const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
                       const idlePct = (event.details.idle_percentage as number) ?? Math.round(event.metric_value * 100);
@@ -329,7 +339,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                           {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
                         </span>
                       );
-                    })() : event.details.description ? (
+                    })() : event.event_type !== "speeding_incident" && event.details.description ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description}
                       </span>

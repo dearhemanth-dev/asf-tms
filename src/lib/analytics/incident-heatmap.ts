@@ -17,8 +17,12 @@ export interface EventDetail {
     severity?: string;
     location?: string;
     speed?: number;
+    posted_limit?: number;
     description?: string;
     duration_minutes?: number;
+    total_idling_minutes?: number;
+    idle_percentage?: number;
+    engine_hours?: number;
     [key: string]: unknown;
   };
   metric_value: number;

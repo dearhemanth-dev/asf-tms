@@ -363,6 +363,9 @@ function generateEventRecords(
   }
 
   // Speeding incidents
+  // Distribute total speeding_minutes across violations (manager-realistic duration)
+  const avgSpeedingDurationMinutes = Math.max(5, Math.floor(metrics.speeding_minutes / Math.max(1, metrics.speeding_violations)));
+  
   for (let i = 0; i < metrics.speeding_violations; i++) {
     const coords = getEventCoordinates("speeding_incident", driverId, dayOffset, i);
     const postedLimit = 65;
@@ -371,6 +374,10 @@ function generateEventRecords(
     
     // Classify severity based on overspeed amount (manager-realistic: ticket risk)
     const severity = overspeeding >= 10 ? "high" : overspeeding >= 5 ? "moderate" : "low";
+    
+    // Duration: distribute daily speeding_minutes across violations with ±25% variance
+    const durationVariance = -0.25 + Math.random() * 0.5; // -25% to +25%
+    const duration = Math.max(3, Math.floor(avgSpeedingDurationMinutes * (1 + durationVariance)));
     
     events.push({
       tenant_id: tenantId,
@@ -381,7 +388,7 @@ function generateEventRecords(
       event_type: "speeding_incident",
       metric_value: 1,
       event_count: 1,
-      duration_minutes: Math.floor(Math.random() * 10) + 2,
+      duration_minutes: duration,
       data_source: "demo_seed",
       source_id: `demo_speeding_${snapshotDate}_${i}`,
       status: "confirmed",
@@ -390,7 +397,7 @@ function generateEventRecords(
         location: ["Interstate", "Highway 99", "Local streets"][i % 3],
         speed: actualSpeed,
         posted_limit: postedLimit,
-        description: `${actualSpeed} mph in ${postedLimit} zone (${overspeeding} mph over)`,
+        description: `${actualSpeed} mph in ${postedLimit} zone for ${duration} min (${overspeeding} mph over)`,
       },
       latitude: coords.latitude,
       longitude: coords.longitude,
