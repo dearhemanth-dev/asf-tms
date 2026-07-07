@@ -320,11 +320,20 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         <span className="font-medium">Speed:</span> {event.details.speed} mph
                       </span>
                     )}
-                    {event.details.description && (
+                    {event.event_type === "idling_episode" ? (() => {
+                      const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
+                      const idlePct = (event.details.idle_percentage as number) ?? Math.round(event.metric_value * 100);
+                      return (
+                        <span className="text-slate-400 flex-1">
+                          <span className="font-medium text-amber-400">{idleMins} min</span> idle
+                          {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
+                        </span>
+                      );
+                    })() : event.details.description ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               );

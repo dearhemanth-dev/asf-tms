@@ -197,7 +197,7 @@ function generateDriverMetrics(
   const harshAccelBase = 2 + ((hashCode * 7) % 3); // 2-4 (always at least 2)
   const harshCornerBase = ((hashCode * 11) % 2); // 0-1
   const speedingBase = 2 + ((hashCode * 13) % 5); // 2-6 (always at least 2)
-  const idleRatioBase = (hashCode % 50) / 100 + 0.02; // 0.02-0.52
+  const idleRatioBase = (hashCode % 30) / 100 + 0.02; // 0.02-0.32 base, varies by day
   const fuelBase = (hashCode % 40) + 40; // 40-80%
 
   // Driver-specific cycle offsets so DVIR/maintenance events fall on different days per driver
@@ -214,6 +214,10 @@ function generateDriverMetrics(
   const faultFreq = 1 + (hashCode % 2);       // 1=occasional, 2=frequent (always at least occasional)
   const maintenanceFreq = (hashCode % 2);     // 0=none, 1=occasional
 
+  // Daily variation for idle ratio (add ±0.05 variance day-to-day)
+  const dailyIdleVariance = ((dayOffset * 7 + hashCode) % 11) / 100 - 0.05; // -0.05 to +0.05
+  const idlingRatio = Math.max(0.01, Math.min(0.45, idleRatioBase + dailyIdleVariance)); // Clamp to realistic range
+
   return {
     harsh_braking_count: harshBrakeBase + (dayOffset % 2),
     harsh_accel_count: harshAccelBase + ((dayOffset + 1) % 2),
@@ -221,8 +225,8 @@ function generateDriverMetrics(
     speeding_violations: speedingBase + (dayOffset % 2),
     speeding_minutes: (speedingBase + (dayOffset % 3)) * 15 + (dayOffset % 20),
     engine_minutes: (9 + (dayOffset % 3)) * 60, // 540-720 min (~9-12 hours)
-    idling_minutes: Math.round((9 + (dayOffset % 3)) * idleRatioBase * 60),
-    idling_ratio: idleRatioBase,
+    idling_minutes: Math.round((9 + (dayOffset % 3)) * idlingRatio * 60),
+    idling_ratio: idlingRatio,
     avg_fuel_level: fuelBase + (((dayOffset * 3 - 9) % 20) / 20),
     fuel_consumed_liters: (9 + (dayOffset % 3)) * 19, // ~19L/hr realistic (4.8-5.3 gal/hr)
     low_fuel_events: fuelBase + (((dayOffset * 3 - 9) % 20) / 20) < 20 ? 1 : 0,
@@ -361,6 +365,13 @@ function generateEventRecords(
   // Speeding incidents
   for (let i = 0; i < metrics.speeding_violations; i++) {
     const coords = getEventCoordinates("speeding_incident", driverId, dayOffset, i);
+    const postedLimit = 65;
+    const actualSpeed = 70 + Math.floor(Math.random() * 15); // 70-84 mph
+    const overspeeding = actualSpeed - postedLimit; // 5-19 mph over
+    
+    // Classify severity based on overspeed amount (manager-realistic: ticket risk)
+    const severity = overspeeding >= 10 ? "high" : overspeeding >= 5 ? "moderate" : "low";
+    
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -375,11 +386,11 @@ function generateEventRecords(
       source_id: `demo_speeding_${snapshotDate}_${i}`,
       status: "confirmed",
       details: {
-        severity: i === 0 ? "high" : "moderate",
+        severity: severity,
         location: ["Interstate", "Highway 99", "Local streets"][i % 3],
-        speed: 70 + Math.floor(Math.random() * 15),
-        posted_limit: 65,
-        description: `Speeding event: ${5 + Math.floor(Math.random() * 10)} mph over limit`,
+        speed: actualSpeed,
+        posted_limit: postedLimit,
+        description: `${actualSpeed} mph in ${postedLimit} zone (${overspeeding} mph over)`,
       },
       latitude: coords.latitude,
       longitude: coords.longitude,
