@@ -73,7 +73,6 @@ export async function fetchSamsaraSafetyEvents(
     }
 
     const url = `https://api.samsara.com/safety-events?${params.toString()}`;
-    console.log(`[samsara-safety-events] Fetching from: ${url}`);
 
     const response = await fetch(url, {
       method: "GET",
@@ -86,22 +85,16 @@ export async function fetchSamsaraSafetyEvents(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(
-        `[samsara-safety-events] Request failed with status ${response.status}`
+      console.warn(
+        `[samsara-api] Safety events request failed (status ${response.status}): ${errorText.substring(0, 150)}`
       );
-      console.error(`[samsara-safety-events] URL: ${url}`);
-      console.error(`[samsara-safety-events] Token: ${token.substring(0, 30)}...`);
-      console.error(`[samsara-safety-events] Error body: ${errorText}`);
       return [];
     }
 
     const data = (await response.json()) as SamsaraSafetyEventsResponse;
     return data.data ?? [];
   } catch (error) {
-    console.error(
-      "[samsara-safety-events] Error fetching safety events:",
-      error
-    );
+    console.warn("[samsara-api] Failed to fetch safety events", error instanceof Error ? error.message : String(error));
     return [];
   }
 }

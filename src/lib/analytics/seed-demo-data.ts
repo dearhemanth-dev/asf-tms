@@ -811,9 +811,6 @@ async function fetchRealSamsaraSafetyEvents(
     }
 
     const apiKey = orgs[0].samsara_api_key as string;
-    console.log("[samsara-integration] Found API key in organizations table");
-    console.log(`[samsara-integration] API key format: ${apiKey.substring(0, 20)}...`);
-    console.log("[samsara-integration] Fetching real safety events from Samsara API");
 
     // Fetch real safety events
     const safetyEvents = await fetchSamsaraSafetyEvents(apiKey, {
@@ -827,7 +824,9 @@ async function fetchRealSamsaraSafetyEvents(
       return [];
     }
 
-    console.log(`[samsara-integration] Found ${safetyEvents.length} real safety events from Samsara`);
+    if (safetyEvents.length > 0) {
+      console.log(`[seed] Added ${safetyEvents.length} real Samsara safety events`);
+    }
 
     // Transform Samsara events to EventPayload format
     const eventPayloads: EventPayload[] = safetyEvents.map((event: SamsaraSafetyEvent) => {
@@ -899,7 +898,7 @@ async function fetchRealSamsaraSafetyEvents(
 
     return eventPayloads;
   } catch (error) {
-    console.error("[samsara-integration] Error fetching Samsara safety events:", error);
+    console.warn("[seed] Samsara API unavailable, using seeded data");
     return [];
   }
 }
@@ -946,7 +945,7 @@ export async function seedAnalyticsData(
       endDate.toISOString().split("T")[0]
     );
 
-    console.log(`[seed-analytics] Got ${realSamsaraEvents.length} real Samsara events`);
+
 
     for (let idx = 0; idx < driverIds.length; idx++) {
       const driver = driverIds[idx];
@@ -1010,9 +1009,6 @@ export async function seedAnalyticsData(
         );
 
         if (daySamsaraEvents.length > 0) {
-          console.log(
-            `[seed-analytics] Adding ${daySamsaraEvents.length} real Samsara events for ${dateStr}`
-          );
           events.push(...daySamsaraEvents);
         }
       }
