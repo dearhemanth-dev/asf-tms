@@ -88,17 +88,17 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
   const incidentTypes = Array.from(new Set(cells.map((c) => c.incidentType))).sort();
   const weeks = Array.from(new Set(cells.map((c) => c.weekLabel)));
 
-  // Manager-sensible ordering: safety risks first, then mechanical, then compliance, then efficiency
+  // Manager-sensible ordering: money matters first (idling waste, then fuel, then safety, compliance, other)
   const INCIDENT_PRIORITY: Record<string, number> = {
-    speeding: 1,
-    harsh_brake: 2,
-    harsh_accel: 3,
-    fuel_consumption: 4,
-    idling: 5,
-    cornering: 6,
-    fault_code: 7,
-    high_temp: 8,
-    dvir_defect: 9,
+    idling: 1,              // Priority 1: Most visible waste (engine burning fuel unnecessarily)
+    fuel_consumption: 2,    // Priority 2: Low fuel incidents (urgent problem)
+    harsh_brake: 3,         // Priority 3: Safety incidents (insurance/maintenance costs)
+    harsh_accel: 3,         // Priority 3: Safety incidents
+    cornering: 3,           // Priority 3: Safety incidents
+    speeding: 4,            // Priority 4: Speeding (compliance/liability)
+    fault_code: 5,          // Priority 5: Mechanical faults
+    high_temp: 5,           // Priority 5: Mechanical issues
+    dvir_defect: 5,         // Priority 5: Vehicle defects
   };
   const getTypePriority = (type: string) => {
     const key = type.toLowerCase();
