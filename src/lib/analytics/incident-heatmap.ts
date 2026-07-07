@@ -178,8 +178,8 @@ function getIncidentTypePriority(eventType: string): number {
   // Priority 1: Idling episodes (most visible waste - engine running unnecessarily)
   if (eventType === "idling_episode") return 1;
   
-  // Priority 2: Low fuel incidents (reactive problem - urgent scramble)
-  if (eventType === "low_fuel_incident") return 2;
+  // Priority 2: Low fuel incidents + fuel consumption tracking (reactive problem - urgent scramble + daily monitoring)
+  if (eventType === "low_fuel_incident" || eventType === "fuel_consumption") return 2;
   
   // Priority 3: Safety incidents (insurance/maintenance costs)
   if (eventType.includes("brake") || eventType.includes("accel") || eventType.includes("corner")) return 3;

@@ -92,6 +92,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
   const INCIDENT_PRIORITY: Record<string, number> = {
     idling: 1,              // Priority 1: Most visible waste (engine burning fuel unnecessarily)
     low_fuel: 2,            // Priority 2: Low fuel incidents (urgent problem)
+    fuel_consumption: 2,    // Priority 2: Daily fuel consumption tracking (money matters)
     harsh_brake: 3,         // Priority 3: Safety incidents (insurance/maintenance costs)
     harsh_accel: 3,         // Priority 3: Safety incidents
     cornering: 3,           // Priority 3: Safety incidents
@@ -357,6 +358,27 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         )}
                       </span>
                     ) : null}
+                    {/* Priority 1b: Daily Fuel Consumption Tracking */}
+                    {event.event_type === "fuel_consumption" ? (
+                      <span className="text-slate-400 flex-1">
+                        {event.details.description && (
+                          <>
+                            <span className="text-cyan-300">{event.details.description}</span>
+                            {event.details.mpg && (
+                              <>
+                                {" | "}<span className="text-cyan-400">Efficiency: <span className="font-medium">{event.details.mpg.toFixed(1)} MPG</span></span>
+                                {" | "}<span className="text-cyan-300">Fleet avg: <span className="font-medium">6.5 MPG</span></span>
+                              </>
+                            )}
+                            {event.details.idling_fuel_wasted_gallons && (
+                              <>
+                                {" | "}<span className="text-amber-400">Idle waste: <span className="font-medium">{event.details.idling_fuel_wasted_gallons} gal</span></span>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </span>
+                    ) : null}
                     {/* Priority 2: Idling (fuel waste) */}
                     {event.event_type === "idling_episode" ? (() => {
                       const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
@@ -410,7 +432,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                       </span>
                     ) : null}
                     {/* Priority 5: Other incidents */}
-                    {event.event_type !== "low_fuel_incident" && event.event_type !== "idling_episode" && event.event_type !== "harsh_brake_incident" && event.event_type !== "harsh_accel_incident" && event.event_type !== "harsh_corner_incident" && event.event_type !== "speeding_incident" && event.details.description ? (
+                    {event.event_type !== "low_fuel_incident" && event.event_type !== "fuel_consumption" && event.event_type !== "idling_episode" && event.event_type !== "harsh_brake_incident" && event.event_type !== "harsh_accel_incident" && event.event_type !== "harsh_corner_incident" && event.event_type !== "speeding_incident" && event.details.description ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description}
                       </span>
