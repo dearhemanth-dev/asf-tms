@@ -338,29 +338,34 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     </p>
                   ) : null}
 
-                  {/* Duration, Speed & Description */}
+                  {/* Duration, Speed & Description - Ordered by manager priority (money first) */}
                   <div className="flex gap-3 text-[10px] flex-wrap">
-                    {event.event_type === "speeding_incident" ? (
+                    {/* Priority 1: Fuel incidents (direct cost) */}
+                    {event.event_type === "low_fuel_incident" ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description && (
-                          <>
-                            <span className="font-medium text-rose-300">{event.duration_minutes} min</span> at{" "}
-                            <span className="font-medium text-rose-300">{event.details.speed} mph</span>
-                            {event.details.posted_limit ? (
-                              <>
-                                {" in "}<span className="text-slate-300">{event.details.posted_limit} zone</span>
-                              </>
-                            ) : null}
-                          </>
+                          <span className="font-medium text-orange-300">{event.details.description}</span>
                         )}
                       </span>
                     ) : null}
-                    {event.event_type === "harsh_brake_incident" || event.event_type === "harsh_accel_incident" ? (
+                    {/* Priority 2: Idling (fuel waste) */}
+                    {event.event_type === "idling_episode" ? (() => {
+                      const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
+                      const idlePct = (event.details.idle_percentage as number) ?? Math.round(event.metric_value * 100);
+                      return (
+                        <span className="text-slate-400 flex-1">
+                          <span className="font-medium text-amber-400">{idleMins} min</span> idle
+                          {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
+                        </span>
+                      );
+                    })() : null}
+                    {/* Priority 3: Safety incidents (insurance/maintenance costs) */}
+                    {event.event_type === "harsh_brake_incident" || event.event_type === "harsh_accel_incident" || event.event_type === "harsh_corner_incident" ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.gforce_magnitude !== undefined && (
                           <>
                             <span className="font-medium text-rose-100">
-                              {event.event_type === "harsh_brake_incident" ? "Hard braking" : "Harsh acceleration"}:
+                              {event.event_type === "harsh_brake_incident" ? "Hard braking" : event.event_type === "harsh_accel_incident" ? "Harsh acceleration" : "Hard corner"}:
                             </span>
                             {" "}
                             <span className="font-medium text-rose-300">
@@ -378,16 +383,24 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         )}
                       </span>
                     ) : null}
-                    {event.event_type === "idling_episode" ? (() => {
-                      const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
-                      const idlePct = (event.details.idle_percentage as number) ?? Math.round(event.metric_value * 100);
-                      return (
-                        <span className="text-slate-400 flex-1">
-                          <span className="font-medium text-amber-400">{idleMins} min</span> idle
-                          {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
-                        </span>
-                      );
-                    })() : event.event_type !== "speeding_incident" && event.event_type !== "harsh_brake_incident" && event.event_type !== "harsh_accel_incident" && event.details.description ? (
+                    {/* Priority 4: Speeding (compliance/liability) */}
+                    {event.event_type === "speeding_incident" ? (
+                      <span className="text-slate-400 flex-1">
+                        {event.details.description && (
+                          <>
+                            <span className="font-medium text-rose-300">{event.duration_minutes} min</span> at{" "}
+                            <span className="font-medium text-rose-300">{event.details.speed} mph</span>
+                            {event.details.posted_limit ? (
+                              <>
+                                {" in "}<span className="text-slate-300">{event.details.posted_limit} zone</span>
+                              </>
+                            ) : null}
+                          </>
+                        )}
+                      </span>
+                    ) : null}
+                    {/* Priority 5: Other incidents */}
+                    {event.event_type !== "low_fuel_incident" && event.event_type !== "idling_episode" && event.event_type !== "harsh_brake_incident" && event.event_type !== "harsh_accel_incident" && event.event_type !== "harsh_corner_incident" && event.event_type !== "speeding_incident" && event.details.description ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description}
                       </span>
