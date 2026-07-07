@@ -340,16 +340,16 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
                   {/* Duration, Speed & Description - Ordered by manager priority (money first) */}
                   <div className="flex gap-3 text-[10px] flex-wrap">
-                    {/* Priority 1: Fuel incidents (direct cost) - combined efficiency view */}
+                    {/* Priority 1: Fuel incidents (direct cost) - combined efficiency view with color coding */}
                     {event.event_type === "low_fuel_incident" ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description && (
                           <>
-                            <span className="font-medium text-orange-300">{event.details.description}</span>
+                            <span className="font-medium text-cyan-300">{event.details.description}</span>
                             {event.details.fuel_efficiency_mpg && (
                               <>
-                                {" | "}<span className="text-orange-300">Efficiency: <span className="font-medium">{event.details.fuel_efficiency_mpg} MPG</span></span>
-                                {" | "}<span className="text-slate-400">Fleet avg: <span className="font-medium">6.5 MPG</span></span>
+                                {" | "}<span className="text-cyan-400">Efficiency: <span className="font-medium">{event.details.fuel_efficiency_mpg} MPG</span></span>
+                                {" | "}<span className="text-cyan-300">Fleet avg: <span className="font-medium">6.5 MPG</span></span>
                               </>
                             )}
                             {" "}<span className="text-slate-500">| Ideal: refuel before 25%</span>
