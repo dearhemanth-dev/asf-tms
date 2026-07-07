@@ -154,6 +154,67 @@ const ROUTE_WAYPOINTS = [
 ];
 
 /**
+ * Categorize idling location based on region and time context
+ * Manager needs to know: truck stop (acceptable) vs urban traffic (coaching opportunity)
+ */
+function categorizeIdlingLocation(
+  region: string,
+  wayPointName: string,
+  idlingMinutes: number
+): { category: string; context: string; acceptable: boolean } {
+  // Classify by region type
+  if (region.startsWith("I-")) {
+    // Major interstate corridors
+    return {
+      category: "Interstate Corridor",
+      context: `${region} (${wayPointName})`,
+      acceptable: idlingMinutes < 120, // <2h is acceptable at truck stops
+    };
+  }
+  if (region.startsWith("US-")) {
+    return {
+      category: "US Highway",
+      context: `${region} (${wayPointName})`,
+      acceptable: idlingMinutes < 90,
+    };
+  }
+  if (region.startsWith("CA-")) {
+    return {
+      category: "State Highway",
+      context: `${region} (${wayPointName})`,
+      acceptable: idlingMinutes < 60,
+    };
+  }
+  if (region === "HUB") {
+    return {
+      category: "Distribution Hub",
+      context: `Loading/unloading at ${wayPointName}`,
+      acceptable: true, // Hubs expect operational idling
+    };
+  }
+  if (region.startsWith("MEX-")) {
+    return {
+      category: "Border Crossing",
+      context: `${wayPointName} (customs/inspection)`,
+      acceptable: true, // Border waits are unavoidable
+    };
+  }
+  if (region.startsWith("CAN-")) {
+    return {
+      category: "Canada Corridor",
+      context: `${wayPointName}`,
+      acceptable: idlingMinutes < 120,
+    };
+  }
+  // Default: treat as urban/unknown
+  return {
+    category: "Urban/Traffic",
+    context: wayPointName,
+    acceptable: idlingMinutes < 45, // Urban idling should be minimal
+  };
+}
+
+/**
  * Helper: Get realistic GPS coordinates based on seeded randomness
  * Ensures deterministic but varied coordinates per event
  */
@@ -589,7 +650,7 @@ function generateEventRecords(
     longitude: fuelCoords.longitude,
   });
 
-  // Idling events - Daily aggregated view (manager-focused: cost & impact)
+  // Idling events - Daily aggregated view (manager-focused: cost & impact + location context)
   if (metrics.idling_minutes > 0) {
     const idlingHours = metrics.idling_minutes / 60;
     const idlingGallonsWasted = Math.round(idlingHours * 0.35 * 100) / 100; // 0.35 gal/hour idle burn rate
@@ -598,6 +659,8 @@ function generateEventRecords(
     const co2Equivalent = Math.round(idlingGallonsWasted * 22.4 * 10) / 10; // 22.4 lbs CO2 per gallon
     
     const idleCoords = getEventCoordinates("idling_episode", driverId, dayOffset, 0);
+    const locationInfo = categorizeIdlingLocation(idleCoords.region, idleCoords.name, metrics.idling_minutes);
+    
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
@@ -620,8 +683,11 @@ function generateEventRecords(
         cost_impact_usd: fuelCostImpact,
         co2_equivalent_lbs: co2Equivalent,
         severity: idlePercentage > 25 ? "high" : idlePercentage > 15 ? "medium" : "low",
-        location: "Daily shift",
-        description: `${Math.round(idlingHours * 10) / 10}h idle (${idlePercentage}% of shift) • ${idlingGallonsWasted} gal wasted • $${fuelCostImpact} cost`,
+        location_category: locationInfo.category,
+        location_context: locationInfo.context,
+        location_acceptable: locationInfo.acceptable,
+        location: locationInfo.context,
+        description: `${Math.round(idlingHours * 10) / 10}h idle (${idlePercentage}% of shift) • ${idlingGallonsWasted} gal wasted • $${fuelCostImpact} cost • at ${locationInfo.context}`,
       },
       latitude: idleCoords.latitude,
       longitude: idleCoords.longitude,

@@ -397,12 +397,15 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         )}
                       </span>
                     ) : null}
-                    {/* Priority 2: Idling (fuel waste) - Manager framing: COST first */}
+                    {/* Priority 2: Idling (fuel waste) - Manager framing: COST first + LOCATION context */}
                     {event.event_type === "idling_episode" ? (() => {
                       const idlingGallons = (event.details.fuel_wasted_gallons as number) ?? 0;
                       const costImpact = (event.details.cost_impact_usd as number) ?? 0;
                       const idlePct = (event.details.idle_percentage_of_engine_time as number) ?? 0;
                       const co2Lbs = (event.details.co2_equivalent_lbs as number) ?? 0;
+                      const locationCategory = (event.details.location_category as string) ?? "Unknown";
+                      const locationContext = (event.details.location_context as string) ?? event.details.location;
+                      const locationAcceptable = (event.details.location_acceptable as boolean) ?? false;
                       
                       return (
                         <div className="flex-1">
@@ -410,9 +413,14 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                             <span className="font-medium text-amber-300">Fuel Waste</span> {" "}
                             <span className="font-medium text-amber-200">{idlingGallons} gal</span>
                             {" "} @ <span className="font-medium text-amber-200">${costImpact}</span>
+                            {locationAcceptable ? (
+                              <span className="text-emerald-400/70"> ✓ {locationCategory}</span>
+                            ) : (
+                              <span className="text-rose-400/70"> ⚠ {locationCategory}</span>
+                            )}
                           </p>
                           <p className="text-slate-500 text-[9px] mt-0.5">
-                            {idlePct}% of shift idling ({(event.details.idling_hours as number)?.toFixed(1)}h) — CO₂: {co2Lbs} lbs
+                            {locationContext} • {idlePct}% of shift ({(event.details.idling_hours as number)?.toFixed(1)}h) — CO₂: {co2Lbs} lbs
                           </p>
                         </div>
                       );
