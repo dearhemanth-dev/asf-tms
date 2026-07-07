@@ -20,9 +20,12 @@ export interface EventDetail {
     posted_limit?: number;
     description?: string;
     duration_minutes?: number;
+    duration_seconds?: number; // G-force events: braking/accel duration
     total_idling_minutes?: number;
     idle_percentage?: number;
     engine_hours?: number;
+    gforce_magnitude?: number; // Harsh braking/accel: actual G-force value
+    samsara_severity_score?: number; // Samsara's calculated severity (0-10)
     [key: string]: unknown;
   };
   metric_value: number;

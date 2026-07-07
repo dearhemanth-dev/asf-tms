@@ -355,6 +355,25 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         )}
                       </span>
                     ) : null}
+                    {event.event_type === "harsh_brake_incident" || event.event_type === "harsh_accel_incident" ? (
+                      <span className="text-slate-400 flex-1">
+                        {event.details.gforce_magnitude !== undefined && (
+                          <>
+                            <span className="font-medium text-rose-300">
+                              {event.details.gforce_magnitude.toFixed(2)}G
+                            </span>
+                            {" at "}
+                            <span className="font-medium text-rose-300">{event.details.speed} mph</span>
+                            {event.details.location ? (
+                              <>
+                                {" on "}
+                                <span className="text-slate-300">{event.details.location}</span>
+                              </>
+                            ) : null}
+                          </>
+                        )}
+                      </span>
+                    ) : null}
                     {event.event_type === "idling_episode" ? (() => {
                       const idleMins = (event.details.total_idling_minutes as number) ?? event.duration_minutes ?? 0;
                       const idlePct = (event.details.idle_percentage as number) ?? Math.round(event.metric_value * 100);
@@ -364,7 +383,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                           {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
                         </span>
                       );
-                    })() : event.event_type !== "speeding_incident" && event.details.description ? (
+                    })() : event.event_type !== "speeding_incident" && event.event_type !== "harsh_brake_incident" && event.event_type !== "harsh_accel_incident" && event.details.description ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description}
                       </span>

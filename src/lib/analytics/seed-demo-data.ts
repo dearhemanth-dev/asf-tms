@@ -15,6 +15,10 @@
  */
 
 import { SupabaseClient } from "@supabase/supabase-js";
+import {
+  calculateSeverityFromGForce,
+  generateEventDescription,
+} from "@/lib/fleet/fetch-samsara-safety-events";
 
 type InsertPayload = {
   tenant_id: string;
@@ -281,15 +285,43 @@ function generateEventRecords(
     return ts.toISOString();
   }
 
-  // Harsh brake incidents (one event per count)
+  // Harsh brake incidents (one event per count) — with realistic G-force physics
   for (let i = 0; i < metrics.harsh_braking_count; i++) {
     const coords = getEventCoordinates("harsh_brake_incident", driverId, dayOffset, i);
+    
+    // Generate realistic G-force value (0.65-0.95G range)
+    const gForceMagnitude = 0.65 + (Math.random() * 0.30);
+    const severity = calculateSeverityFromGForce(gForceMagnitude);
+    
+    // Determine road type from coordinates
+    const roadType = coords.region === "I-5-CA" || coords.region === "I-5-OR" || coords.region === "I-5-WA"
+      ? "Interstate 5"
+      : coords.region === "US-101" ? "Highway 101"
+      : "Local streets";
+    
+    // Speed context varies by road type
+    let speed: number;
+    let postedLimit: number;
+    if (roadType.includes("Interstate")) {
+      speed = 65 + Math.floor(Math.random() * 15);
+      postedLimit = 65;
+    } else if (roadType.includes("Highway")) {
+      speed = 50 + Math.floor(Math.random() * 10);
+      postedLimit = 55;
+    } else {
+      speed = 30 + Math.floor(Math.random() * 10);
+      postedLimit = 35;
+    }
+    
+    const durationSeconds = 0.8 + Math.random() * 1.4; // 0.8-2.2 seconds
+    const timestamp = createTimestamp(6 + Math.floor(Math.random() * 12), Math.floor(Math.random() * 60));
+    
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
       truck_unit_number: truckUnit,
       event_date: snapshotDate,
-      event_timestamp: createTimestamp(6 + Math.floor(Math.random() * 12), Math.floor(Math.random() * 60)),
+      event_timestamp: timestamp,
       event_type: "harsh_brake_incident",
       metric_value: 1,
       event_count: 1,
@@ -298,25 +330,61 @@ function generateEventRecords(
       source_id: `demo_brake_${snapshotDate}_${i}`,
       status: "confirmed",
       details: {
-        severity: ["high", "moderate", "low"][i % 3],
-        location: ["I-5 Exit 42", "US-101 Mile 15", "CA-99 Downtown"][i % 3],
-        speed: 55 + Math.floor(Math.random() * 20),
-        description: "Rapid deceleration event",
+        severity,
+        location: roadType,
+        speed,
+        posted_limit: postedLimit,
+        gforce_magnitude: parseFloat(gForceMagnitude.toFixed(2)),
+        duration_seconds: parseFloat(durationSeconds.toFixed(1)),
+        description: generateEventDescription(
+          {
+            eventType: "harshBraking",
+            gForceMagnitude,
+            speedMph: speed,
+            occurredAt: timestamp,
+          } as any,
+          roadType,
+          coords.name
+        ),
       },
       latitude: coords.latitude,
       longitude: coords.longitude,
     });
   }
 
-  // Harsh acceleration incidents
+  // Harsh acceleration incidents — with realistic G-force physics
   for (let i = 0; i < metrics.harsh_accel_count; i++) {
     const coords = getEventCoordinates("harsh_accel_incident", driverId, dayOffset, i);
+    
+    // Generate realistic G-force value (0.50-0.75G range, typically lower than braking)
+    const gForceMagnitude = 0.50 + (Math.random() * 0.25);
+    const severity = calculateSeverityFromGForce(gForceMagnitude);
+    
+    // Determine road type from coordinates
+    const roadType = coords.region === "I-5-CA" || coords.region === "I-5-OR" || coords.region === "I-5-WA"
+      ? "Interstate 5"
+      : coords.region === "US-101" ? "Highway 101"
+      : "Local streets";
+    
+    // Speed context varies by road type (acceleration typically from lower speeds)
+    let speed: number;
+    if (roadType.includes("Interstate")) {
+      speed = 45 + Math.floor(Math.random() * 15);
+    } else if (roadType.includes("Highway")) {
+      speed = 35 + Math.floor(Math.random() * 15);
+    } else {
+      speed = 15 + Math.floor(Math.random() * 20); // Lower speeds in city for acceleration
+    }
+    
+    const durationSeconds = 1.0 + Math.random() * 1.5; // 1.0-2.5 seconds
+    const timestamp = createTimestamp(7 + Math.floor(Math.random() * 12), Math.floor(Math.random() * 60));
+    
     events.push({
       tenant_id: tenantId,
       driver_id: driverId,
       truck_unit_number: truckUnit,
       event_date: snapshotDate,
-      event_timestamp: createTimestamp(7 + Math.floor(Math.random() * 12), Math.floor(Math.random() * 60)),
+      event_timestamp: timestamp,
       event_type: "harsh_accel_incident",
       metric_value: 1,
       event_count: 1,
@@ -325,10 +393,21 @@ function generateEventRecords(
       source_id: `demo_accel_${snapshotDate}_${i}`,
       status: "confirmed",
       details: {
-        severity: ["moderate", "low"][i % 2],
-        location: ["Traffic light restart", "Merge acceleration"][i % 2],
-        speed: 20 + Math.floor(Math.random() * 15),
-        description: "Rapid acceleration event",
+        severity,
+        location: roadType,
+        speed,
+        gforce_magnitude: parseFloat(gForceMagnitude.toFixed(2)),
+        duration_seconds: parseFloat(durationSeconds.toFixed(1)),
+        description: generateEventDescription(
+          {
+            eventType: "harshAcceleration",
+            gForceMagnitude,
+            speedMph: speed,
+            occurredAt: timestamp,
+          } as any,
+          roadType,
+          coords.name
+        ),
       },
       latitude: coords.latitude,
       longitude: coords.longitude,

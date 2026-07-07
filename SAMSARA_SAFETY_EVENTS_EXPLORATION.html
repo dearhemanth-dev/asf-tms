@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Samsara Safety Events: Real Data Exploration</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #1e1b4b 0%, #2d1b4e 100%);
+      color: #e2e8f0;
+      padding: 24px;
+      line-height: 1.6;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 { font-size: 2em; margin-bottom: 8px; color: #f1f5f9; }
+    .subtitle { font-size: 0.95em; color: #cbd5e1; margin-bottom: 32px; }
+
+    .section {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      backdrop-filter: blur(10px);
+    }
+
+    h2 {
+      font-size: 1.4em;
+      margin-bottom: 16px;
+      color: #e0e7ff;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.75em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge.bad { background: rgba(244, 63, 94, 0.2); color: #ff6b7a; }
+    .badge.good { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+    .badge.recommended { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .comparison-item {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .comparison-item h3 {
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #94a3b8;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    .code-block {
+      background: rgba(0, 0, 0, 0.4);
+      border-left: 3px solid #60a5fa;
+      padding: 12px;
+      border-radius: 4px;
+      font-family: "Monaco", "Menlo", monospace;
+      font-size: 0.85em;
+      overflow-x: auto;
+      margin-bottom: 12px;
+    }
+
+    .field {
+      margin-bottom: 10px;
+      padding: 8px;
+      background: rgba(51, 65, 85, 0.3);
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    .field-label { color: #64748b; font-size: 0.8em; }
+    .field-value { color: #cbd5e1; margin-top: 4px; font-weight: 500; }
+
+    .endpoint-comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .endpoint-card {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .endpoint-card h3 {
+      font-size: 0.95em;
+      margin-bottom: 12px;
+      color: #e0e7ff;
+    }
+
+    .pros, .cons {
+      margin-bottom: 12px;
+    }
+
+    .pros-title, .cons-title {
+      font-size: 0.8em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .pros-title { color: #4ade80; }
+    .cons-title { color: #ff6b7a; }
+
+    .pro, .con {
+      font-size: 0.85em;
+      margin-bottom: 6px;
+      padding-left: 16px;
+    }
+
+    .pro::before { content: "✓ "; color: #22c55e; font-weight: bold; margin-right: 4px; }
+    .con::before { content: "✗ "; color: #ef4444; font-weight: bold; margin-right: 4px; }
+
+    .example-block {
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 12px;
+      border-left: 4px solid #22c55e;
+    }
+
+    .example-block.before {
+      border-left-color: #ef4444;
+    }
+
+    .example-title {
+      font-size: 0.8em;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .before { color: #ff6b7a; }
+    .after { color: #4ade80; }
+
+    .decision-box {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(99, 102, 241, 0.1));
+      border: 2px solid rgba(59, 130, 246, 0.3);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 24px;
+    }
+
+    .decision-title {
+      color: #60a5fa;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .decision-item {
+      margin-bottom: 12px;
+      padding: 12px;
+      background: rgba(30, 41, 59, 0.5);
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+
+    .question { color: #cbd5e1; margin-bottom: 6px; }
+    .answer { color: #4ade80; margin-top: 4px; font-size: 0.9em; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 0.9em;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    th {
+      background: rgba(51, 65, 85, 0.4);
+      color: #cbd5e1;
+      font-weight: 600;
+    }
+
+    tr:hover { background: rgba(51, 65, 85, 0.2); }
+
+    .metric-box {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 12px;
+    }
+
+    .metric-value {
+      font-size: 1.5em;
+      font-family: monospace;
+      color: #60a5fa;
+      margin: 8px 0;
+    }
+
+    .metric-description {
+      font-size: 0.85em;
+      color: #94a3b8;
+    }
+
+    .flow-chart {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 12px;
+      font-family: monospace;
+      font-size: 0.85em;
+      line-height: 1.8;
+    }
+
+    .highlight { color: #22c55e; font-weight: bold; }
+    .alert { color: #ff6b7a; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎯 Samsara Safety Events API</h1>
+    <p class="subtitle">Real Data Exploration: Replacing Arbitrary Harsh Braking/Acceleration with Samsara G-Force Physics</p>
+
+    <!-- CURRENT PROBLEM -->
+    <div class="section">
+      <h2>❌ Current Problem: Arbitrary Seed Data</h2>
+      <p style="margin-bottom: 16px;">Harsh braking and acceleration events are currently generated with hardcoded values that managers can't act on:</p>
+
+      <div class="comparison">
+        <div class="comparison-item">
+          <h3>🔴 What We Generate</h3>
+          <div class="code-block">
+severity: "high"          ← Index-based guess
+location: "I-5 Exit 42"   ← Hardcoded
+speed: 72 mph             ← Random
+description: "Rapid
+  deceleration event"     ← Meaningless
+          </div>
+        </div>
+        <div class="comparison-item">
+          <h3>❓ Manager Question</h3>
+          <div class="field">
+            <div class="field-value">
+              "Why was this marked 'high'? First event always gets 'high' — that's not severity, that's an index! What should the driver do?"
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REAL SAMSARA DATA -->
+    <div class="section">
+      <h2>✅ What Real Samsara Provides</h2>
+      <p style="margin-bottom: 16px;">Two API endpoints available. Which should we use?</p>
+
+      <div class="endpoint-comparison">
+        <div class="endpoint-card">
+          <h3>/safety-events/stream</h3>
+          <span class="badge">Real-Time WebSocket</span>
+
+          <div class="pros">
+            <div class="pros-title">Advantages</div>
+            <div class="pro">Real-time safety event updates</div>
+            <div class="pro">Perfect for alert system</div>
+            <div class="pro">Live driver coaching</div>
+          </div>
+
+          <div class="cons">
+            <div class="cons-title">Disadvantages</div>
+            <div class="con">Requires persistent connection</div>
+            <div class="con">Complex lifecycle management</div>
+            <div class="con">Overkill for daily analytics</div>
+          </div>
+
+          <p style="font-size: 0.85em; color: #94a3b8; margin-top: 12px;">Use Case: Real-time alerts (not our current need)</p>
+        </div>
+
+        <div class="endpoint-card" style="border-color: rgba(34, 197, 94, 0.4);">
+          <h3>/safety-events <span class="badge recommended">RECOMMENDED</span></h3>
+          <span class="badge">Batch Query</span>
+
+          <div class="pros">
+            <div class="pros-title">Advantages</div>
+            <div class="pro">Perfect for daily analytics report</div>
+            <div class="pro">Simple REST query + filter</div>
+            <div class="pro">Date range + vehicle/driver filters</div>
+            <div class="pro">Handles pagination automatically</div>
+            <div class="pro">1000 req/min rate limit (plenty)</div>
+          </div>
+
+          <div class="cons">
+            <div class="cons-title">Disadvantages</div>
+            <div class="con">Not real-time (OK—we're doing daily reports)</div>
+          </div>
+
+          <p style="font-size: 0.85em; color: #4ade80; margin-top: 12px;">✓ Use Case: Backfill historical data for heatmap</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- REAL PAYLOAD -->
+    <div class="section">
+      <h2>📊 Real Samsara Payload: `/safety-events` (Batch)</h2>
+      <p style="margin-bottom: 16px;">Example response for one driver's harsh braking on 2026-07-06:</p>
+
+      <div class="code-block">
+{
+  "data": [
+    {
+      "id": "se_1234567890",
+      "eventType": "harshBraking",
+      "occurredAt": "2026-07-06T17:23:10Z",
+      "vehicle": {"id": "vehicle_123", "name": "T-001"},
+      "driver": {"id": "driver_456", "name": "John Smith"},
+      "gForceMagnitude": 0.87,           ← <span class="highlight">REAL PHYSICS</span>
+      "speedMph": 65,                    ← Real telemetry
+      "location": {
+        "latitude": 45.5152,
+        "longitude": -122.6784           ← Real GPS (can geocode)
+      },
+      "durationSeconds": 1.2,
+      "scores": {
+        "severity": 8.5,                 ← Samsara's assessment (0-10)
+        "coachingOpportunity": 9.0
+      }
+    }
+  ],
+  "pagination": {
+    "hasNextPage": false
+  }
+}
+      </div>
+
+      <p style="margin-top: 16px; color: #cbd5e1;">This is ONE harsh braking event. Query returns all events for a date range.</p>
+    </div>
+
+    <!-- TRANSFORMATION -->
+    <div class="section">
+      <h2>🔄 Seed Data → Real Samsara: The Transformation</h2>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="color: #ff6b7a; margin-bottom: 12px;">❌ Seed Data (Current)</h3>
+        <div class="example-block before">
+          <div class="example-title before">What We Generate Now</div>
+          <div class="code-block">
+{
+  severity: "high",                    // Wrong: i%3=0
+  location: "I-5 Exit 42",            // Wrong: hardcoded
+  speed: 72,                          // Wrong: random
+  description: "Rapid deceleration"   // Wrong: not actionable
+}
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="color: #4ade80; margin-bottom: 12px;">✅ Real Samsara (What We'll Use)</h3>
+        <div class="example-block">
+          <div class="example-title">Samsara Provides</div>
+          <div class="code-block">
+{
+  gForceMagnitude: 0.87,               // Physics: 0.87G
+  speedMph: 65,                        // Real vehicle speed
+  location: {lat: 45.5152, lon: -122.6784},  // Real GPS
+  occurredAt: "2026-07-06T17:23:10Z",  // Real timestamp
+  scores: {severity: 8.5}              // Samsara's score
+}
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="color: #4ade80; margin-bottom: 12px;">🎯 Manager Sees (Transformed)</h3>
+        <div class="example-block">
+          <div class="example-title">Manager-Friendly Display</div>
+          <div class="code-block">
+Location: Portland, OR (downtown local streets)
+Time: 5:23 PM (late shift)
+Braking Force: <span class="highlight">0.87G</span> (emergency-level deceleration)
+Speed: 65 mph on 35 mph zone ← Unexpected scenario!
+Coaching: "Hard braking on city streets—improve spacing and planning"
+Severity: <span class="highlight">HIGH</span> (0.87G physics + risky scenario)
+          </div>
+          <p style="margin-top: 12px; font-size: 0.85em; color: #cbd5e1;">
+            ✓ Manager question: "OK—I understand. Driver was in a 35 mph zone and braked hard. Let's coach on spacing."
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- G-FORCE PHYSICS -->
+    <div class="section">
+      <h2>⚙️ G-Force: The Real Metric (Not Arbitrary Labels)</h2>
+      <p style="margin-bottom: 16px;">Instead of guessing "high/moderate/low", we use physics:</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>G-Force Range</th>
+            <th>Truck Experience</th>
+            <th>Our Severity</th>
+            <th>Manager Coaching</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="metric-value" style="font-size: 1em; color: #ff6b7a;">≥ 0.85G</span></td>
+            <td>Emergency stop / ABS activation</td>
+            <td>🔴 HIGH</td>
+            <td>"Emergency braking—improve planning/spacing"</td>
+          </tr>
+          <tr>
+            <td><span class="metric-value" style="font-size: 1em; color: #f59e0b;">0.65–0.85G</span></td>
+            <td>Hard but controlled braking</td>
+            <td>🟡 MODERATE</td>
+            <td>"Firm braking—smooth out transitions"</td>
+          </tr>
+          <tr>
+            <td><span class="metric-value" style="font-size: 1em; color: #22c55e;">< 0.65G</span></td>
+            <td>Normal/gentle braking</td>
+            <td>🟢 LOW</td>
+            <td>"Good braking control"</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top: 16px; color: #cbd5e1;">
+        <strong>Why G-force?</strong> It's objective physics. 0.87G means what it means everywhere—passenger comfort, brake wear, cargo shifting. No guessing. Manager immediately understands severity.
+      </p>
+    </div>
+
+    <!-- MANAGER EXPERIENCE -->
+    <div class="section">
+      <h2>👤 Manager Experience: Before vs After</h2>
+
+      <div style="margin-bottom: 24px;">
+        <h3 style="color: #ff6b7a; margin-bottom: 12px;">Before (Seed Data)</h3>
+        <div class="example-block before">
+          <div class="field">
+            <div class="field-label">Event</div>
+            <div class="field-value">Harsh Braking</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Severity</div>
+            <div class="field-value">HIGH (why? index-based guess)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Location</div>
+            <div class="field-value">I-5 Exit 42 (generic, hardcoded)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Speed</div>
+            <div class="field-value">72 mph (random)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Description</div>
+            <div class="field-value">Rapid deceleration event</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Manager Conversation</div>
+            <div class="field-value" style="color: #ff6b7a;">❌ "What happened? Why is this marked HIGH? Is this real data?"</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 style="color: #4ade80; margin-bottom: 12px;">After (Real Samsara)</h3>
+        <div class="example-block">
+          <div class="field">
+            <div class="field-label">Event</div>
+            <div class="field-value">Harsh Braking</div>
+          </div>
+          <div class="field">
+            <div class="field-label">G-Force</div>
+            <div class="field-value">0.87G (emergency-level physics)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Location</div>
+            <div class="field-value">Portland, OR (downtown local streets)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Speed</div>
+            <div class="field-value">65 mph in 35 mph zone (unexpected context!)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Time</div>
+            <div class="field-value">5:23 PM (late shift — fatigue factor)</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Description</div>
+            <div class="field-value">0.87G hard braking on local streets at late shift—watch spacing</div>
+          </div>
+          <div class="field">
+            <div class="field-label">Manager Conversation</div>
+            <div class="field-value" style="color: #4ade80;">✓ "Got it. Driver was in a 35 mph zone and braked hard. Let's coach on spacing and trip planning. Also watch fatigue in late shifts."</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DECISION BOX -->
+    <div class="section">
+      <div class="decision-box">
+        <div class="decision-title">🎯 Ready to Proceed?</div>
+        
+        <div class="decision-item">
+          <div class="question"><strong>1. Which endpoint?</strong></div>
+          <div class="answer">✓ Use `/safety-events` (batch query). Simpler, perfect for daily analytics.</div>
+        </div>
+
+        <div class="decision-item">
+          <div class="question"><strong>2. Severity calculation?</strong></div>
+          <div class="answer">✓ Use G-force thresholds (≥0.85G=high, 0.65-0.85=moderate, <0.65=low). Physics-based, not arbitrary.</div>
+        </div>
+
+        <div class="decision-item">
+          <div class="question"><strong>3. If Samsara API is down?</strong></div>
+          <div class="answer">✓ Fall back to seed data (it's already there). Show "using cached data" warning.</div>
+        </div>
+
+        <div class="decision-item">
+          <div class="question"><strong>4. Start date for backfill?</strong></div>
+          <div class="answer">✓ Start from 2026-07-06 (today in demo). Query last 7 days for heatmap.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEXT STEPS -->
+    <div class="section">
+      <h2>📋 Implementation Checklist</h2>
+      <p style="margin-bottom: 16px;">To make this real:</p>
+
+      <div style="display: grid; gap: 12px;">
+        <div class="field">
+          <div class="field-label">Step 1</div>
+          <div class="field-value">Create `src/lib/fleet/fetch-samsara-safety-events.ts` with `/safety-events` query function</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Step 2</div>
+          <div class="field-value">Update `EventDetail` interface in `incident-heatmap.ts` to include `gforce_magnitude` field</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Step 3</div>
+          <div class="field-value">Modify `seed-demo-data.ts` harsh braking/accel to call Samsara endpoint (with fallback to seed)</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Step 4</div>
+          <div class="field-value">Update `IncidentHeatmap.tsx` display to show G-force: "0.87G at 65 mph on local streets"</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Step 5</div>
+          <div class="field-value">Test with real Samsara data from your account</div>
+        </div>
+        <div class="field">
+          <div class="field-label">Step 6</div>
+          <div class="field-value">Compare manager experience: seed vs real—verify improved clarity</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUMMARY TABLE -->
+    <div class="section">
+      <h2>📊 Summary: What Changes</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Aspect</th>
+            <th>Seed Data (Now)</th>
+            <th>Real Samsara (After)</th>
+            <th>Manager Impact</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Severity</strong></td>
+            <td>Index-based (i%3)</td>
+            <td>G-force physics (0.87G)</td>
+            <td>✓ Objective, defensible</td>
+          </tr>
+          <tr>
+            <td><strong>Location</strong></td>
+            <td>Hardcoded ("I-5 Exit 42")</td>
+            <td>Real GPS + reverse geocoding</td>
+            <td>✓ Accountability</td>
+          </tr>
+          <tr>
+            <td><strong>Speed</strong></td>
+            <td>Random (72 mph)</td>
+            <td>Real vehicle telemetry</td>
+            <td>✓ Context-accurate</td>
+          </tr>
+          <tr>
+            <td><strong>Time Context</strong></td>
+            <td>Not shown</td>
+            <td>Timestamp + shift phase</td>
+            <td>✓ Fatigue consideration</td>
+          </tr>
+          <tr>
+            <td><strong>Coaching</strong></td>
+            <td>Generic ("Rapid deceleration")</td>
+            <td>Data-driven by context</td>
+            <td>✓ Actionable coaching</td>
+          </tr>
+          <tr>
+            <td><strong>Manager Trust</strong></td>
+            <td>"Why 'HIGH'? This looks made up."</td>
+            <td>"Physics + context = HIGH. Makes sense."</td>
+            <td>✓ Builds confidence</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="section" style="text-align: center; opacity: 0.7;">
+      <p>Full technical details: See <code>SAMSARA_SAFETY_EVENTS_EXPLORATION.md</code></p>
+      <p style="margin-top: 8px; font-size: 0.85em;">Ready to implement? Answer the 4 decision questions above, then start with Step 1.</p>
+    </div>
+  </div>
+</body>
+</html>
