@@ -368,8 +368,9 @@ function generateEventRecords(
   
   for (let i = 0; i < metrics.speeding_violations; i++) {
     const coords = getEventCoordinates("speeding_incident", driverId, dayOffset, i);
-    const postedLimit = 65;
-    const actualSpeed = 70 + Math.floor(Math.random() * 15); // 70-84 mph
+    const location = ["Interstate", "Highway 99", "Local streets"][i % 3];
+    const postedLimit = location === "Interstate" ? 65 : location === "Local streets" ? 35 : 55; // Realistic by road type
+    const actualSpeed = postedLimit + 5 + Math.floor(Math.random() * 15); // 5-19 mph over posted limit
     const overspeeding = actualSpeed - postedLimit; // 5-19 mph over
     
     // Classify severity based on overspeed amount (manager-realistic: ticket risk)
@@ -394,7 +395,7 @@ function generateEventRecords(
       status: "confirmed",
       details: {
         severity: severity,
-        location: ["Interstate", "Highway 99", "Local streets"][i % 3],
+        location: location,
         speed: actualSpeed,
         posted_limit: postedLimit,
         description: `${actualSpeed} mph in ${postedLimit} zone for ${duration} min (${overspeeding} mph over)`,
