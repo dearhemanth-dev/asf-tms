@@ -18,6 +18,8 @@ import { SupabaseClient } from "@supabase/supabase-js";
 import {
   calculateSeverityFromGForce,
   generateEventDescription,
+  fetchSamsaraSafetyEvents,
+  type SamsaraSafetyEvent,
 } from "@/lib/fleet/fetch-samsara-safety-events";
 
 type InsertPayload = {
@@ -160,7 +162,7 @@ function getEventCoordinates(
   driverId: string,
   dayOffset: number,
   eventIndex: number
-): { latitude: number; longitude: number } {
+): { latitude: number; longitude: number; region: string; name: string } {
   // Use driver ID and day to seed coordinate selection
   const segments = driverId.split("-");
   const hash = segments[segments.length - 1];
@@ -179,6 +181,8 @@ function getEventCoordinates(
   return {
     latitude: parseFloat((baseWaypoint.lat + latJitter).toFixed(6)),
     longitude: parseFloat((baseWaypoint.lon + lonJitter).toFixed(6)),
+    region: baseWaypoint.region,
+    name: baseWaypoint.name,
   };
 }
 
@@ -784,6 +788,121 @@ function generateEventRecords(
 }
 
 /**
+ * Fetch real Samsara safety events and transform to EventPayload format
+ * Falls back to empty array if API key not found or request fails
+ */
+async function fetchRealSamsaraSafetyEvents(
+  supabase: SupabaseClient,
+  tenantId: string,
+  startDate: string,
+  endDate: string
+): Promise<EventPayload[]> {
+  try {
+    // Get Samsara API key from organizations table
+    const { data: orgs, error: orgsError } = await supabase
+      .from("organizations")
+      .select("samsara_api_key")
+      .eq("tenant_id", tenantId)
+      .limit(1);
+
+    if (orgsError || !orgs || orgs.length === 0 || !orgs[0].samsara_api_key) {
+      console.log("[samsara-integration] No Samsara API key configured");
+      return [];
+    }
+
+    const apiKey = orgs[0].samsara_api_key as string;
+    console.log("[samsara-integration] Fetching real safety events from Samsara API");
+
+    // Fetch real safety events
+    const safetyEvents = await fetchSamsaraSafetyEvents(apiKey, {
+      startTime: new Date(startDate).toISOString(),
+      endTime: new Date(endDate).toISOString(),
+      limit: 1000,
+    });
+
+    if (safetyEvents.length === 0) {
+      console.log("[samsara-integration] No safety events found from Samsara");
+      return [];
+    }
+
+    console.log(`[samsara-integration] Found ${safetyEvents.length} real safety events from Samsara`);
+
+    // Transform Samsara events to EventPayload format
+    const eventPayloads: EventPayload[] = safetyEvents.map((event: SamsaraSafetyEvent) => {
+      // Find matching driver in fleet (use Samsara driver name)
+      // For demo purposes, we'll map to our internal format
+      const driverId = event.driver.id || `samsara_${event.driver.id}`;
+      const truckUnit = event.vehicle.name || "Unknown";
+
+      // Determine road type from coordinates (rough approximation)
+      const lat = event.location.latitude;
+      const lon = event.location.longitude;
+      let roadType = "Interstate 80";
+      
+      if (lat < 34) {
+        roadType = "Interstate 10";
+      } else if (lat < 40) {
+        roadType = "Interstate 40";
+      } else {
+        roadType = "Interstate 5";
+      }
+
+      // Calculate severity from G-force
+      const severity = calculateSeverityFromGForce(event.gForceMagnitude);
+
+      // Generate event date/time
+      const eventDate = new Date(event.occurredAt).toISOString().split("T")[0];
+      const eventTimestamp = event.occurredAt;
+
+      // Determine event type name
+      const eventType = event.eventType === "harshBraking"
+        ? "harsh_brake_incident"
+        : event.eventType === "harshAcceleration"
+          ? "harsh_accel_incident"
+          : "harsh_corner_incident";
+
+      // Generate manager-friendly description
+      const description = generateEventDescription(
+        event,
+        roadType,
+        `${event.location.latitude.toFixed(4)}, ${event.location.longitude.toFixed(4)}`
+      );
+
+      return {
+        tenant_id: tenantId,
+        driver_id: driverId,
+        truck_unit_number: truckUnit,
+        event_date: eventDate,
+        event_timestamp: eventTimestamp,
+        event_type: eventType,
+        metric_value: 1,
+        event_count: 1,
+        duration_minutes: null,
+        data_source: "samsara_api",
+        source_id: event.id,
+        status: "confirmed",
+        details: {
+          severity,
+          location: roadType,
+          speed: event.speedMph,
+          gforce_magnitude: parseFloat(event.gForceMagnitude.toFixed(2)),
+          duration_seconds: event.durationSeconds,
+          samsara_severity_score: event.scores?.severity,
+          description,
+        },
+        latitude: event.location.latitude,
+        longitude: event.location.longitude,
+      };
+    });
+
+    return eventPayloads;
+  } catch (error) {
+    console.error("[samsara-integration] Error fetching Samsara safety events:", error);
+    return [];
+  }
+}
+
+/**
  * Seed analytics tables with 7 days of demo data for given drivers
  * Creates both snapshots (daily aggregates) and events (detailed records)
  */
@@ -811,6 +930,21 @@ export async function seedAnalyticsData(
     const snapshots: InsertPayload[] = [];
     const events: EventPayload[] = [];
     const today = new Date();
+
+    // Fetch real Samsara safety events first
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - (windowDays - 1));
+    const endDate = new Date(today);
+    endDate.setDate(endDate.getDate() + 1); // Include today
+
+    const realSamsaraEvents = await fetchRealSamsaraSafetyEvents(
+      supabase,
+      tenantId,
+      startDate.toISOString().split("T")[0],
+      endDate.toISOString().split("T")[0]
+    );
+
+    console.log(`[seed-analytics] Got ${realSamsaraEvents.length} real Samsara events`);
 
     for (let idx = 0; idx < driverIds.length; idx++) {
       const driver = driverIds[idx];
@@ -864,7 +998,27 @@ export async function seedAnalyticsData(
           dayOffset
         );
         events.push(...dayEvents);
+
+        // Add real Samsara events for this day (if available)
+        // Filter to only harsh brake/accel for this driver and date
+        const daySamsaraEvents = realSamsaraEvents.filter(
+          (evt) =>
+            evt.event_date === dateStr &&
+            (evt.event_type === "harsh_brake_incident" || evt.event_type === "harsh_accel_incident")
+        );
+
+        if (daySamsaraEvents.length > 0) {
+          console.log(
+            `[seed-analytics] Adding ${daySamsaraEvents.length} real Samsara events for ${dateStr}`
+          );
+          events.push(...daySamsaraEvents);
+        }
       }
+    }
+
+    // Merge with any existing real Samsara events (in case we're reseeding)
+    if (realSamsaraEvents.length > 0) {
+      events.push(...realSamsaraEvents);
     }
 
     if (snapshots.length === 0) {
@@ -877,11 +1031,12 @@ export async function seedAnalyticsData(
     }
 
     // Clear old demo events before reseeding (prevent duplicates)
+    // Clear both demo_seed and samsara_api sources
     const { error: deleteError } = await supabase
       .from("driver_analytics_events")
       .delete()
       .eq("tenant_id", tenantId)
-      .eq("data_source", "demo_seed");
+      .in("data_source", ["demo_seed", "samsara_api"]);
 
     if (deleteError) {
       console.warn(`Warning: Failed to clear old demo events: ${deleteError.message}`);
