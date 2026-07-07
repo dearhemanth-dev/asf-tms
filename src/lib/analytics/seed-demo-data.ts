@@ -237,7 +237,7 @@ function generateDriverMetrics(
     idling_ratio: idlingRatio,
     avg_fuel_level: fuelBase + (((dayOffset * 3 - 9) % 20) / 20),
     fuel_consumed_liters: (9 + (dayOffset % 3)) * 19, // ~19L/hr realistic (4.8-5.3 gal/hr)
-    low_fuel_events: fuelBase < 35 ? 1 : 0, // Generate low fuel event if fuel level is below 35%
+    low_fuel_events: (hashCode % 5 === 0) ? 1 : 0, // Generate low fuel events for ~20% of drivers on every day
     dvir_defects_count: dvirFreq === 0 ? 0 : (dayOffset % 7 === dvirCycle ? (dvirFreq === 2 ? 2 : 1) : 0),
     maintenance_alerts_count: maintenanceFreq === 0 ? 0 : (dayOffset % 7 === maintenanceCycle ? 1 : 0),
     fault_codes_count: faultFreq === 0 ? 0 : (dayOffset % 4 === faultCycle ? 1 : (faultFreq === 2 && dayOffset % 4 === (faultCycle + 2) % 4 ? 1 : 0)),
