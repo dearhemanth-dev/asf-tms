@@ -224,7 +224,7 @@ function generateDriverMetrics(
     idling_minutes: Math.round((9 + (dayOffset % 3)) * idleRatioBase * 60),
     idling_ratio: idleRatioBase,
     avg_fuel_level: fuelBase + (((dayOffset * 3 - 9) % 20) / 20),
-    fuel_consumed_liters: (9 + (dayOffset % 3)) * 6.5, // ~6.5L/hr typical
+    fuel_consumed_liters: (9 + (dayOffset % 3)) * 19, // ~19L/hr realistic (4.8-5.3 gal/hr)
     low_fuel_events: fuelBase + (((dayOffset * 3 - 9) % 20) / 20) < 20 ? 1 : 0,
     dvir_defects_count: dvirFreq === 0 ? 0 : (dayOffset % 7 === dvirCycle ? (dvirFreq === 2 ? 2 : 1) : 0),
     maintenance_alerts_count: maintenanceFreq === 0 ? 0 : (dayOffset % 7 === maintenanceCycle ? 1 : 0),
@@ -441,37 +441,13 @@ function generateEventRecords(
     });
   }
 
-  // Fuel consumption
-  const fuelCoords = getEventCoordinates("fuel_consumption", driverId, dayOffset, 0);
-  
-  // Convert liters to gallons (1 liter = 0.264172 gallons)
-  const litersConsumed = metrics.fuel_consumed_liters;
-  const gallonsConsumed = Math.round(litersConsumed * 0.264172 * 100) / 100; // Round to 2 decimals
-  const engineHours = Math.round(metrics.engine_minutes / 60);
-  
-  events.push({
-    tenant_id: tenantId,
-    driver_id: driverId,
-    truck_unit_number: truckUnit,
-    event_date: snapshotDate,
-    event_timestamp: createTimestamp(23, 0),
-    event_type: "fuel_consumption",
-    metric_value: gallonsConsumed, // Store in gallons
-    event_count: null,
-    duration_minutes: null,
-    data_source: "demo_seed",
-    source_id: `demo_fuel_consumption_${snapshotDate}`,
-    status: "confirmed",
-    details: {
-      liters_consumed: litersConsumed,
-      gallons_consumed: gallonsConsumed,
-      engine_hours: engineHours,
-      location: "Daily route",
-      description: `${gallonsConsumed} gal • ${engineHours}h engine runtime`,
-    },
-    latitude: fuelCoords.latitude,
-    longitude: fuelCoords.longitude,
-  });
+  // NOTE: Fuel consumption removed per data availability audit (SAMSARA_DATA_AUDIT.md)
+  // Samsara does not provide fuel consumption data; cannot be calculated reliably without:
+  // 1. Vehicle fuel tank capacity (must be stored in vehicles table via VIN lookup)
+  // 2. Two-point fuel level comparison (previous vs. current tank %)
+  // Use low_fuel_incident events above for fuel level % alerts instead.
+  // Future: When vehicles.fuel_tank_capacity_gallons is populated, can calculate:
+  //   consumed = (level_start% - level_end%) * vehicle.fuel_tank_capacity_gallons
 
   // DVIR defects
   if (metrics.dvir_defects_count > 0) {
