@@ -811,6 +811,8 @@ async function fetchRealSamsaraSafetyEvents(
     }
 
     const apiKey = orgs[0].samsara_api_key as string;
+    console.log("[samsara-integration] Found API key in organizations table");
+    console.log(`[samsara-integration] API key format: ${apiKey.substring(0, 20)}...`);
     console.log("[samsara-integration] Fetching real safety events from Samsara API");
 
     // Fetch real safety events

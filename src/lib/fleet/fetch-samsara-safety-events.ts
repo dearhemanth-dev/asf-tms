@@ -72,22 +72,26 @@ export async function fetchSamsaraSafetyEvents(
       params.append("driverIds", options.driverIds.join(","));
     }
 
-    const response = await fetch(
-      `https://api.samsara.com/safety-events?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-        cache: "no-store",
-      }
-    );
+    const url = `https://api.samsara.com/safety-events?${params.toString()}`;
+    console.log(`[samsara-safety-events] Fetching from: ${url}`);
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
 
     if (!response.ok) {
-      console.warn(
+      const errorText = await response.text();
+      console.error(
         `[samsara-safety-events] Request failed with status ${response.status}`
       );
+      console.error(`[samsara-safety-events] URL: ${url}`);
+      console.error(`[samsara-safety-events] Token: ${token.substring(0, 30)}...`);
+      console.error(`[samsara-safety-events] Error body: ${errorText}`);
       return [];
     }
 
