@@ -1016,11 +1016,6 @@ export async function seedAnalyticsData(
       }
     }
 
-    // Merge with any existing real Samsara events (in case we're reseeding)
-    if (realSamsaraEvents.length > 0) {
-      events.push(...realSamsaraEvents);
-    }
-
     if (snapshots.length === 0) {
       return {
         success: false,
