@@ -778,6 +778,18 @@ export async function seedAnalyticsData(
       };
     }
 
+    // Clear old demo events before reseeding (prevent duplicates)
+    const { error: deleteError } = await supabase
+      .from("driver_analytics_events")
+      .delete()
+      .eq("tenant_id", tenantId)
+      .eq("data_source", "demo_seed");
+
+    if (deleteError) {
+      console.warn(`Warning: Failed to clear old demo events: ${deleteError.message}`);
+      // Don't return error - proceed with insert anyway
+    }
+
     // Insert snapshots
     const { error: snapshotError } = await supabase
       .from("driver_analytics_snapshots")
