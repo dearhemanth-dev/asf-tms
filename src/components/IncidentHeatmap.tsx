@@ -299,7 +299,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     )}
                   </div>
 
-                  {/* Manager context: Time of day • Road type + zone • Shift progress */}
+                  {/* Manager context: Time • Location (where it happened) • Zone • Shift progress */}
                   {event.event_type === "speeding_incident" ? (
                     <p className="text-[10px] text-slate-200 mb-2 leading-snug">
                       {(() => {
@@ -316,10 +316,13 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         const shiftProgress = (hoursIntoShift + minutesDecimal).toFixed(1);
                         
                         // Road type context
-                        const location = event.details.location || "Unknown road";
+                        const roadType = event.details.location || "Unknown road";
                         const zone = event.details.posted_limit ? `${event.details.posted_limit} mph zone` : "unknown zone";
                         
-                        return `${timeStr} • ${location}, ${zone} • ${shiftProgress} hrs into shift`;
+                        // Incident location (where speeding happened, for manager conversation)
+                        const incidentLocation = resolved ? formatResolvedLocation(resolved) : "Unknown location";
+                        
+                        return `${timeStr} • ${incidentLocation} (${roadType}) • ${zone} • ${shiftProgress} hrs into shift`;
                       })()}
                     </p>
                   ) : resolved ? (
