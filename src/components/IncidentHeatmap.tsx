@@ -91,7 +91,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
   // Manager-sensible ordering: money matters first (idling waste, then fuel, then safety, compliance, other)
   const INCIDENT_PRIORITY: Record<string, number> = {
     idling: 1,              // Priority 1: Most visible waste (engine burning fuel unnecessarily)
-    fuel_consumption: 2,    // Priority 2: Low fuel incidents (urgent problem)
+    low_fuel: 2,            // Priority 2: Low fuel incidents (urgent problem)
     harsh_brake: 3,         // Priority 3: Safety incidents (insurance/maintenance costs)
     harsh_accel: 3,         // Priority 3: Safety incidents
     cornering: 3,           // Priority 3: Safety incidents
