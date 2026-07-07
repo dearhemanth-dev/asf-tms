@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   HeatmapCell,
   EventDetail,
@@ -83,6 +83,24 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
     weekLabel: "",
     incidentType: "",
   });
+  const [fleetAverageMpg, setFleetAverageMpg] = useState<number | null>(null);
+
+  // Fetch real fleet average MPG on component mount
+  useEffect(() => {
+    const fetchFleetAverageMpg = async () => {
+      try {
+        const response = await fetch("/api/analytics/fleet-average-mpg");
+        if (response.ok) {
+          const data = await response.json();
+          setFleetAverageMpg(data.fleet_average_mpg);
+        }
+      } catch (error) {
+        console.error("Failed to fetch fleet average MPG:", error);
+      }
+    };
+
+    fetchFleetAverageMpg();
+  }, []);
 
   // Group cells by incident type (rows)
   const incidentTypes = Array.from(new Set(cells.map((c) => c.incidentType))).sort();
@@ -350,7 +368,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                             {event.details.fuel_efficiency_mpg && (
                               <>
                                 {" | "}<span className="text-cyan-400">Efficiency: <span className="font-medium">{event.details.fuel_efficiency_mpg} MPG</span></span>
-                                {" | "}<span className="text-cyan-300">Fleet avg: <span className="font-medium">6.5 MPG</span></span>
+                                {" | "}<span className="text-cyan-300">Fleet avg: <span className="font-medium">{fleetAverageMpg ? `${fleetAverageMpg.toFixed(1)} MPG` : "N/A"}</span></span>
                               </>
                             )}
                             {" "}<span className="text-slate-500">| Ideal: refuel before 25%</span>
@@ -366,13 +384,13 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                             <span className="text-cyan-300">{event.details.description}</span>
                             {event.details.mpg && (
                               <>
-                                {" | "}<span className="text-cyan-400">Efficiency: <span className="font-medium">{event.details.mpg.toFixed(1)} MPG</span></span>
-                                {" | "}<span className="text-cyan-300">Fleet avg: <span className="font-medium">6.5 MPG</span></span>
+                                {" | "}<span className="text-cyan-400">Efficiency: <span className="font-medium">{((event.details.mpg as number) as number).toFixed(1)} MPG</span></span>
+                                {" | "}<span className="text-cyan-300">Fleet avg: <span className="font-medium">{fleetAverageMpg ? `${fleetAverageMpg.toFixed(1)} MPG` : "N/A"}</span></span>
                               </>
                             )}
                             {event.details.idling_fuel_wasted_gallons && (
                               <>
-                                {" | "}<span className="text-amber-400">Idle waste: <span className="font-medium">{event.details.idling_fuel_wasted_gallons} gal</span></span>
+                                {" | "}<span className="text-amber-400">Idle waste: <span className="font-medium">{(event.details.idling_fuel_wasted_gallons as number)} gal</span></span>
                               </>
                             )}
                           </>
