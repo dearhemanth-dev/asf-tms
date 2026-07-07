@@ -142,7 +142,13 @@ export function createWeeklyHeatmap(
       const weekLabel = `${formatMonthDay(weekStart)}-${formatMonthDay(weekEnd)}`;
 
       Array.from(allTypes)
-        .sort()
+        .sort((a, b) => {
+          const priorityA = getIncidentTypePriority(a);
+          const priorityB = getIncidentTypePriority(b);
+          if (priorityA !== priorityB) return priorityA - priorityB;
+          // Alphabetical fallback for same priority
+          return a.localeCompare(b);
+        })
         .forEach((incidentType) => {
           const events = typeMap[incidentType] || [];
           const count = events.length;
@@ -160,6 +166,27 @@ export function createWeeklyHeatmap(
     });
 
   return cells;
+}
+
+/**
+ * Manager-focused priority order for incident types (money matters)
+ * Prioritizes most conspicuous waste and direct money loss
+ */
+function getIncidentTypePriority(eventType: string): number {
+  // Priority 1: Idling episodes (most visible waste - engine running unnecessarily)
+  if (eventType === "idling_episode") return 1;
+  
+  // Priority 2: Low fuel incidents (reactive problem - urgent scramble)
+  if (eventType === "low_fuel_incident") return 2;
+  
+  // Priority 3: Safety incidents (insurance/maintenance costs)
+  if (eventType.includes("brake") || eventType.includes("accel") || eventType.includes("corner")) return 3;
+  
+  // Priority 4: Speeding (compliance/liability + fuel inefficiency)
+  if (eventType === "speeding_incident") return 4;
+  
+  // Priority 5: Everything else
+  return 5;
 }
 
 /**

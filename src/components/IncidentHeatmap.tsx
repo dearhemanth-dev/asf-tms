@@ -344,7 +344,10 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     {event.event_type === "low_fuel_incident" ? (
                       <span className="text-slate-400 flex-1">
                         {event.details.description && (
-                          <span className="font-medium text-orange-300">{event.details.description}</span>
+                          <>
+                            <span className="font-medium text-orange-300">{event.details.description}</span>
+                            {" "}<span className="text-slate-500">| Ideal: refuel before 25%</span>
+                          </>
                         )}
                       </span>
                     ) : null}
@@ -356,6 +359,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                         <span className="text-slate-400 flex-1">
                           <span className="font-medium text-amber-400">{idleMins} min</span> idle
                           {" "}·{" "}<span className="font-medium text-amber-300">{idlePct}%</span> of engine-on time
+                          {" "}<span className="text-slate-500">| Ideal: 0 min</span>
                         </span>
                       );
                     })() : null}
