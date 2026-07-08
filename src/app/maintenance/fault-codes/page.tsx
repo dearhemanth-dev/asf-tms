@@ -1301,8 +1301,9 @@ export default function MaintenanceFaultCodesPage() {
   const effectiveRole = demoMode ? demoRole : profile?.role;
   const effectiveName = demoMode ? getDisplayName(demoUsername) : profile?.full_name ?? "ASF User";
   const effectiveUsername = (demoMode ? demoUsername : profile?.username ?? "").trim().toLowerCase();
-  const canUsePushTestControls = effectiveUsername === "hkmaintenance" || effectiveUsername === "skmaintenance";
-  const canUseWebhookControls = effectiveUsername === "hkmaintenance";
+  const canUsePushTestControls = effectiveUsername === "hkmaintenance"; // Dev-only: testing controls
+  const canUseWebhookControls = effectiveUsername === "hkmaintenance"; // Dev-only: webhook config
+  const canTriggerBackfill = effectiveUsername === "hkmaintenance";   // Dev-only: manual backfill
   const canEnrollPushOnDevice = Boolean(effectiveUsername) && effectiveRole === "maintenance";
 
   const [loadingData, setLoadingData] = useState(true);
@@ -1349,6 +1350,18 @@ export default function MaintenanceFaultCodesPage() {
   const [pushAuditLoading, setPushAuditLoading] = useState(false);
   const [pushAuditError, setPushAuditError] = useState<string | null>(null);
   const [pushAuditRows, setPushAuditRows] = useState<PushActionAuditEntry[]>([]);
+  
+  // Backfill monitoring
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillLastRun, setBackfillLastRun] = useState<{
+    date: string;
+    inserted: number;
+    duplicates: number;
+    errors: number;
+    snapshot_fallback_used: boolean;
+  } | null>(null);
+
   const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplay | null>(null);
   const [activeRepairCardByVehicle, setActiveRepairCardByVehicle] = useState<Record<string, number>>({});
   const [repairCardContentHeights, setRepairCardContentHeights] = useState<Record<string, number>>({});
@@ -1959,6 +1972,36 @@ export default function MaintenanceFaultCodesPage() {
     }
   }
 
+  async function triggerBackfillNow() {
+    setBackfillRunning(true);
+    try {
+      const response = await fetch("/api/maintenance/backfill-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false, triggeredBy: "manual" }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as BackfillAlertsResponse;
+      if (response.ok && data.ok && !data.error) {
+        setBackfillLastRun({
+          date: data.date ?? new Date().toISOString().slice(0, 10),
+          inserted: data.inserted ?? 0,
+          duplicates: data.duplicates ?? 0,
+          errors: data.errors ?? 0,
+          snapshot_fallback_used: data.snapshotFallbackUsed ?? false,
+        });
+        setErrorMessage(null);
+        await loadFaultCodes(true);
+      } else {
+        setErrorMessage(data.error ?? "Backfill failed");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Backfill request failed");
+    } finally {
+      setBackfillRunning(false);
+    }
+  }
+
   async function restartPushTestWorkflow() {
     setPushWorkflowLoading(true);
     setPushMessage(null);
@@ -2493,6 +2536,44 @@ export default function MaintenanceFaultCodesPage() {
                   )}
                 </>
               )}
+            </article>
+
+            {/* Backfill Status Monitor */}
+            <article className="rounded-lg border border-cyan-600/35 bg-slate-950/60 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex-1">
+                  <p className="text-xs uppercase tracking-wide text-cyan-300">Backfill Status (Primary Layer)</p>
+                  {backfillLastRun ? (
+                    <>
+                      <p className="mt-2 text-xs text-slate-200">
+                        Last run: <span className="font-mono text-cyan-200">{backfillLastRun.date}</span>
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Result: <span className="text-emerald-300 font-semibold">{backfillLastRun.inserted}</span> inserted
+                        {backfillLastRun.duplicates > 0 && `, ${backfillLastRun.duplicates} duplicates`}
+                        {backfillLastRun.errors > 0 && `, ${backfillLastRun.errors} errors`}
+                      </p>
+                      {backfillLastRun.snapshot_fallback_used && (
+                        <p className="mt-1 text-xs text-amber-300">
+                          ⚠ Snapshot fallback used (no time-window data)
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-1 text-xs text-slate-400">No recent backfill run</p>
+                  )}
+                </div>
+                {effectiveUsername && canUsePushTestControls && (
+                  <button
+                    type="button"
+                    onClick={() => void triggerBackfillNow()}
+                    disabled={backfillRunning || refreshing || loadingData}
+                    className="flex-shrink-0 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-50"
+                  >
+                    {backfillRunning ? "Running..." : "Run Now"}
+                  </button>
+                )}
+              </div>
             </article>
           </div>
 

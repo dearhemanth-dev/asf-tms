@@ -329,6 +329,10 @@ function makeAlertsFromVehicle(
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const startTime = Date.now();
+  let httpStatus = 200;
+  let logNotes: string[] = [];
+
   try {
     const appUser = await getAppSessionUser(request);
     if (!appUser?.tenantId) {
@@ -342,6 +346,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const vehicleFilter = asString(body.vehicleFilter);
     const dryRun = body.dryRun !== false;
+    const triggeredBy = asString(body.triggeredBy) || "manual";
     const { date, startIso, endIso } = normalizeDateWindow(asString(body.date) || null);
 
     const supabase = getServiceRoleClient();
@@ -352,6 +357,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       .not("samsara_api_key", "is", null);
 
     if (orgError) {
+      httpStatus = 500;
+      logNotes.push(`Org key fetch error: ${orgError.message}`);
       return NextResponse.json({ error: orgError.message || "Unable to load Samsara key(s)." }, { status: 500 });
     }
 
@@ -360,6 +367,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       .filter((row) => row.tenantId && row.key);
 
     if (keys.length === 0) {
+      httpStatus = 200;
+      logNotes.push("No Samsara API keys configured");
+      
+      // Log to backfill ingestion logs
+      await supabase.from("maintenance_backfill_ingestion_logs").insert({
+        tenant_id: appUser.tenantId,
+        triggered_by: triggeredBy,
+        date_window: date,
+        vehicle_filter: vehicleFilter || null,
+        dry_run: dryRun,
+        key_count: 0,
+        http_status: 200,
+        notes: logNotes.join("; "),
+      });
+
       return NextResponse.json(
         {
           error: "No Samsara API key configured for this tenant.",
@@ -372,15 +394,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     const pendingAlerts: BackfillAlertRow[] = [];
-    const sourceErrors: string[] = [];
+    const sourceErrorsByKey = new Map<number, string[]>();
     let matchedVehicles = 0;
     let faultEntriesScanned = 0;
     let dtcRowsSeen = 0;
     let lightOnEntries = 0;
     let snapshotFallbackUsed = false;
 
+    // Fetch from time-windowed stats for each key
     for (let sourceKeyIndex = 0; sourceKeyIndex < keys.length; sourceKeyIndex += 1) {
       const source = keys[sourceKeyIndex];
+      const keyErrors = sourceErrorsByKey.get(sourceKeyIndex) ?? [];
 
       try {
         const vehicles = await fetchStatsForToken(source.key, startIso, endIso);
@@ -394,14 +418,23 @@ export async function POST(request: Request): Promise<NextResponse> {
           pendingAlerts.push(...parsed.alerts);
         }
       } catch (error) {
-        sourceErrors.push(error instanceof Error ? error.message : "Unknown Samsara error");
+        const errorMsg = error instanceof Error ? error.message : "Unknown Samsara error";
+        keyErrors.push(errorMsg);
+        logNotes.push(`Key[${sourceKeyIndex}] time-window fetch error: ${errorMsg}`);
       }
+
+      sourceErrorsByKey.set(sourceKeyIndex, keyErrors);
     }
 
+    // Fallback to snapshot if no time-windowed data
     if (faultEntriesScanned === 0) {
       snapshotFallbackUsed = true;
+      logNotes.push("Time-window returned 0 entries, using current snapshot fallback");
+      
       for (let sourceKeyIndex = 0; sourceKeyIndex < keys.length; sourceKeyIndex += 1) {
         const source = keys[sourceKeyIndex];
+        const keyErrors = sourceErrorsByKey.get(sourceKeyIndex) ?? [];
+
         try {
           const vehicles = await fetchSnapshotStatsForToken(source.key);
           for (const vehicle of vehicles) {
@@ -413,18 +446,52 @@ export async function POST(request: Request): Promise<NextResponse> {
             pendingAlerts.push(...parsed.alerts);
           }
         } catch (error) {
-          sourceErrors.push(error instanceof Error ? error.message : "Unknown Samsara snapshot error");
+          const errorMsg = error instanceof Error ? error.message : "Unknown Samsara snapshot error";
+          keyErrors.push(errorMsg);
+          logNotes.push(`Key[${sourceKeyIndex}] snapshot fallback error: ${errorMsg}`);
         }
+
+        sourceErrorsByKey.set(sourceKeyIndex, keyErrors);
       }
     }
 
+    // Deduplicate in-memory (will rely on DB UNIQUE constraint for cross-layer dedup)
     const dedupedByEventId = new Map<string, BackfillAlertRow>();
     for (const row of pendingAlerts) {
       dedupedByEventId.set(`${row.tenant_id}:${row.event_id}`, row);
     }
     const dedupedAlerts = [...dedupedByEventId.values()];
 
+    // Collect source errors for logging
+    const sourceErrors: string[] = [];
+    sourceErrorsByKey.forEach((errors, keyIndex) => {
+      if (errors.length > 0) {
+        sourceErrors.push(`Key[${keyIndex}]: ${errors.join("; ")}`);
+      }
+    });
+
+    // DRY RUN RESPONSE
     if (dryRun) {
+      const logEntry = {
+        tenant_id: appUser.tenantId,
+        triggered_by: triggeredBy,
+        date_window: date,
+        vehicle_filter: vehicleFilter || null,
+        dry_run: true,
+        key_count: keys.length,
+        matched_vehicles: matchedVehicles,
+        fault_entries_scanned: faultEntriesScanned,
+        dtc_rows_seen: dtcRowsSeen,
+        light_on_entries: lightOnEntries,
+        candidate_alerts: dedupedAlerts.length,
+        snapshot_fallback_used: snapshotFallbackUsed,
+        source_errors: sourceErrors.length > 0 ? sourceErrors : null,
+        http_status: 200,
+        notes: logNotes.join("; "),
+      };
+
+      await supabase.from("maintenance_backfill_ingestion_logs").insert(logEntry);
+
       return NextResponse.json(
         {
           ok: true,
@@ -452,6 +519,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
+    // REAL INSERT
     let inserted = 0;
     let duplicates = 0;
     let errors = 0;
@@ -464,9 +532,39 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       if (error) {
         errors += 1;
+        logNotes.push(`Insert error: ${error.message}`);
         continue;
       }
       inserted += 1;
+    }
+
+    httpStatus = inserted > 0 || duplicates > 0 ? 200 : 400;
+
+    // Log ingestion results
+    const logEntry = {
+      tenant_id: appUser.tenantId,
+      triggered_by: triggeredBy,
+      date_window: date,
+      vehicle_filter: vehicleFilter || null,
+      dry_run: false,
+      key_count: keys.length,
+      matched_vehicles: matchedVehicles,
+      fault_entries_scanned: faultEntriesScanned,
+      dtc_rows_seen: dtcRowsSeen,
+      light_on_entries: lightOnEntries,
+      candidate_alerts: dedupedAlerts.length,
+      inserted_count: inserted,
+      duplicate_count: duplicates,
+      error_count: errors,
+      snapshot_fallback_used: snapshotFallbackUsed,
+      source_errors: sourceErrors.length > 0 ? sourceErrors : null,
+      http_status: httpStatus,
+      notes: logNotes.join("; "),
+    };
+
+    const { error: logError } = await supabase.from("maintenance_backfill_ingestion_logs").insert(logEntry);
+    if (logError) {
+      console.error("[backfill] Failed to log ingestion:", logError.message);
     }
 
     return NextResponse.json(
@@ -491,6 +589,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 200 }
     );
   } catch (error) {
+    console.error("[backfill] Unexpected error:", error instanceof Error ? error.message : String(error));
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Unexpected server error.",
