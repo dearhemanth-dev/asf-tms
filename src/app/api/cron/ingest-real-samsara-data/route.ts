@@ -70,7 +70,7 @@ async function fetchSafetyEventsFromSamsara(
   });
 
   try {
-    const response = await fetch(`https://api.samsara.com/safety-events?${params}`, {
+    const response = await fetch(`https://api.samsara.com/fleet/safety-events?${params}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         Accept: "application/json",
@@ -134,40 +134,91 @@ async function transformAndIngestEvents(
   const errors: string[] = [];
   let ingested = 0;
 
-  // Map event types to driver_analytics_events format
-  const eventTypeMap: Record<string, string> = {
+  // Map Samsara behavior labels to driver_analytics_events format
+  const behaviorTypeMap: Record<string, string> = {
+    obstructedCamera: "distraction_incident",
     harshBraking: "harsh_brake_incident",
     harshAcceleration: "harsh_accel_incident",
     harshCorner: "harsh_corner_incident",
     speeding: "speeding_incident",
     followingDistance: "following_distance_incident",
     laneSwitch: "lane_switch_incident",
-    distraction: "distraction_incident",
+    collision: "collision_incident",
+    recklessDriving: "reckless_driving_incident",
   };
 
   for (const event of events) {
     try {
-      const eventType = eventTypeMap[event.type] || event.type.toLowerCase().replace(/([A-Z])/g, "_$1").substring(1);
-      const eventDate = new Date(event.timestamp).toISOString().split("T")[0];
+      // Extract timestamp (Samsara uses 'time' field)
+      const timestamp = event.timestamp || ((event as any)['time'] as string);
+      if (!timestamp) {
+        errors.push(`Event ${event.id}: No timestamp found`);
+        continue;
+      }
 
-      // Extract details based on event type
+      const eventDate = new Date(timestamp).toISOString().split("T")[0];
+
+      // Extract driver info
+      const driverId = event.driverId || ((event as any)['driver']?.['id'] as string);
+      const driverName = event.driverName || ((event as any)['driver']?.['name'] as string);
+      
+      if (!driverId) {
+        errors.push(`Event ${event.id}: No driver ID found`);
+        continue;
+      }
+
+      // Extract vehicle info
+      const vehicleId = event.vehicleId || ((event as any)['vehicle']?.['id'] as string);
+      const vehicleName = event.vehicleName || ((event as any)['vehicle']?.['name'] as string);
+
+      // Determine event type from behaviorLabels (Samsara structure)
+      let eventType: string;
+      const eventRawType = event.type;
+      const behaviorLabels = ((event as any)['behaviorLabels'] as Array<{ label: string }> | undefined);
+      
+      if (behaviorLabels && behaviorLabels.length > 0) {
+        // Use first behavior label
+        const label = behaviorLabels[0].label;
+        eventType = behaviorTypeMap[label] || `${label.toLowerCase().replace(/([A-Z])/g, "_$1").toLowerCase()}`;
+      } else if (eventRawType) {
+        // Fallback to raw type
+        eventType = behaviorTypeMap[eventRawType] || eventRawType.toLowerCase().replace(/([A-Z])/g, "_$1").toLowerCase();
+      } else {
+        eventType = "unknown_incident";
+      }
+
+      // Extract location
+      const locationObj = ((event as any)['location'] as Record<string, number> | undefined);
+      const locationStr = locationObj 
+        ? `${locationObj.latitude?.toFixed(6)}, ${locationObj.longitude?.toFixed(6)}`
+        : "Unknown";
+
+      // Extract g-force
+      const gForce = event.gForce || (((event as any)['maxAccelerationGForce']) as number | undefined);
+
+      // Build details object
       const details: Record<string, unknown> = {
-        location: event.location || "Unknown",
+        location: locationStr,
         source: "samsara",
-        severity: calculateSeverity(event.type),
+        severity: calculateSeverity(eventType),
       };
 
-      if (event.gForce !== undefined) details.gforce_magnitude = event.gForce;
+      if (gForce !== undefined) details.gforce_magnitude = gForce;
       if (event.speed !== undefined) details.speed = event.speed;
       if (event.postedLimit !== undefined) details.posted_limit = event.postedLimit;
 
-      // Build insert object matching schema: tenant_id, driver_id, truck_unit_number, event_date, event_timestamp, event_type, data_source, source_id, status, details
+      // Add coaching state if available
+      const coachingState = ((event as any)['coachingState']);
+      if (coachingState) details.coaching_state = coachingState;
+
+      // Build insert object
       const insertData = {
         tenant_id: tenantId,
-        driver_id: event.driverId,
-        truck_unit_number: event.vehicleName || "Unknown",
+        driver_id: driverId,
+        driver_name: driverName,
+        truck_unit_number: vehicleName || vehicleId || "Unknown",
         event_date: eventDate,
-        event_timestamp: event.timestamp,
+        event_timestamp: timestamp,
         event_type: eventType,
         data_source: "samsara",
         source_id: event.id,
@@ -179,7 +230,7 @@ async function transformAndIngestEvents(
       const { error } = await supabase.from("driver_analytics_events").upsert(
         insertData,
         {
-          onConflict: "tenant_id,driver_id,event_type,event_date,source_id", // Unique constraint
+          onConflict: "tenant_id,driver_id,event_type,event_date,source_id",
         }
       );
 
@@ -197,11 +248,12 @@ async function transformAndIngestEvents(
 }
 
 function calculateSeverity(eventType: string): "low" | "medium" | "high" {
-  const highSeverity = ["harshBraking", "harshAcceleration", "speeding"];
-  const mediumSeverity = ["harshCorner", "followingDistance"];
+  const highSeverity = ["harsh_brake", "harsh_accel", "speeding", "collision", "reckless"];
+  const mediumSeverity = ["harsh_corner", "following_distance", "lane_switch"];
   
-  if (highSeverity.some(t => eventType.includes(t))) return "high";
-  if (mediumSeverity.some(t => eventType.includes(t))) return "medium";
+  const lowerType = eventType.toLowerCase();
+  if (highSeverity.some(t => lowerType.includes(t))) return "high";
+  if (mediumSeverity.some(t => lowerType.includes(t))) return "medium";
   return "low";
 }
 
