@@ -96,11 +96,20 @@ function getServiceRoleClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-async function fetchSamsaraStats(apiKey: string, types: string[]): Promise<ApiResponse | null> {
-  const typeParam = types.join(",");
-  const url = `https://api.samsara.com/fleet/vehicles/stats?types=${encodeURIComponent(typeParam)}`;
-  
+async function fetchSamsaraStats(apiKey: string): Promise<ApiResponse | null> {
   try {
+    // Build query params for Samsara API (required parameters)
+    const endTime = new Date();
+    const startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000); // Last 7 days
+    const params = new URLSearchParams({
+      types: "faultCodes", // Required parameter
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      limit: "512", // Max limit per Samsara API
+    });
+    
+    const url = `https://api.samsara.com/fleet/vehicles/stats?${params}`;
+    
     const response = await fetch(url, {
       method: "GET",
       headers: {
@@ -215,98 +224,119 @@ export async function POST(request: Request): Promise<NextResponse> {
     result.keysProcessed = apiKeys.length;
 
     // 3. FETCH STATS FOR EACH KEY (continue on error)
-    const statsPayload = await fetchSamsaraStats(apiKeys[0], ["faultCodes"]);
-    if (!statsPayload || !statsPayload.data) {
-      result.keysFailed = apiKeys.length;
-      result.errorSummary.push("Failed to fetch Samsara stats");
-      result.completedAt = new Date().toISOString();
-      result.durationMs = Date.now() - startTime;
-      return NextResponse.json({ ...result, ok: false }, { status: 200 });
-    }
+    const allAlerts: Array<{
+      tenant_id: string;
+      vehicle_id: string;
+      spn: string;
+      fmi: string;
+      severity: "critical" | "warning" | "info";
+      title: string;
+      description: string;
+      source: string;
+      event_id: string;
+      received_at: string;
+    }> = [];
 
-    result.keysSucceeded = 1;
+    for (const apiKey of apiKeys) {
+      try {
+        const statsPayload = await fetchSamsaraStats(apiKey);
+        if (!statsPayload || !statsPayload.data) {
+          result.keysFailed++;
+          result.errorSummary.push(`Failed to fetch Samsara stats for key ${apiKey.substring(0, 8)}...`);
+          continue;
+        }
 
-    // 4. PROCESS VEHICLES
-    for (const vehicle of statsPayload.data) {
-      const vehicleId = asString(vehicle.id);
-      const vehicleName = asString(vehicle.name);
+        result.keysSucceeded++;
 
-      if (!vehicleId) continue;
+        // 4. PROCESS VEHICLES FOR THIS KEY
+        for (const vehicle of statsPayload.data) {
+          const vehicleId = asString(vehicle.id);
+          const vehicleName = asString(vehicle.name);
 
-      result.vehiclesFound++;
+          if (!vehicleId) continue;
 
-      // Extract fault codes
-      const faultCodes = asArray(vehicle.faultCodes);
-      if (faultCodes.length === 0) continue;
+          result.vehiclesFound++;
 
-      for (const faultEntry of faultCodes) {
-        const faultRecord = asRecord(faultEntry);
-        if (!faultRecord) continue;
+          // Extract fault codes
+          const faultCodes = asArray(vehicle.faultCodes);
+          if (faultCodes.length === 0) continue;
 
-        const j1939 = asRecord(faultRecord.j1939);
-        const dtcArray = asArray(j1939?.diagnosticTroubleCodes ?? []);
+          for (const faultEntry of faultCodes) {
+            const faultRecord = asRecord(faultEntry);
+            if (!faultRecord) continue;
 
-        if (dtcArray.length === 0) continue;
+            const j1939 = asRecord(faultRecord.j1939);
+            const dtcArray = asArray(j1939?.diagnosticTroubleCodes ?? []);
 
-        // Check for check-engine lights
-        const lights = asRecord(j1939?.checkEngineLights);
-        const warningIsOn = toBool(lights?.warningIsOn);
-        const stopIsOn = toBool(lights?.stopIsOn);
+            if (dtcArray.length === 0) continue;
 
-        const severity = stopIsOn ? "critical" : warningIsOn ? "warning" : "info";
+            // Check for check-engine lights
+            const lights = asRecord(j1939?.checkEngineLights);
+            const warningIsOn = toBool(lights?.warningIsOn);
+            const stopIsOn = toBool(lights?.stopIsOn);
 
-        // Process each DTC
-        for (const dtcRecord of dtcArray) {
-          const dtc = asRecord(dtcRecord);
-          if (!dtc) continue;
+            const severity = stopIsOn ? "critical" : warningIsOn ? "warning" : "info";
 
-          const spn = asString(dtc.spn);
-          const fmi = asString(dtc.fmi);
+            // Process each DTC
+            for (const dtcRecord of dtcArray) {
+              const dtc = asRecord(dtcRecord);
+              if (!dtc) continue;
 
-          if (!spn || !fmi) continue;
+              const spn = asString(dtc.spn);
+              const fmi = asString(dtc.fmi);
 
-          result.alertsAttempted++;
+              if (!spn || !fmi) continue;
 
-          const eventId = `backfill:${vehicleId}|${spn}|${fmi}`;
-          const alert = {
-            tenant_id: tenantId,
-            event_type: "FaultCode",
-            event_id: eventId,
-            occurred_at: new Date().toISOString(),
-            received_at: new Date().toISOString(),
-            vehicle_id: vehicleId,
-            vehicle_name: vehicleName || null,
-            driver_id: null,
-            driver_name: null,
-            severity,
-            title: `Fault Code ${spn}/${fmi}`,
-            description: `Engine fault detected: SPN ${spn}, FMI ${fmi}`,
-            status: "open",
-            acknowledged_by: null,
-            acknowledged_at: null,
-            resolved_at: null,
-            raw_payload: {
-              source: "backfill",
-              spn,
-              fmi,
-              warningIsOn,
-              stopIsOn,
-              checkEngineLights: lights,
-            },
-          };
+              result.alertsAttempted++;
 
-          const upsertResult = await upsertAlert(supabase, alert);
-          if (upsertResult.inserted) {
-            result.alertsInserted++;
-          } else if (upsertResult.isDuplicate) {
-            result.alertsDuplicate++;
-          } else {
-            result.alertsErrored++;
-            if (upsertResult.error) {
-              result.errorSummary.push(`Vehicle ${vehicleId}: ${upsertResult.error}`);
+              const eventId = `backfill:${vehicleId}|${spn}|${fmi}`;
+              const alert = {
+                tenant_id: tenantId,
+                event_type: "FaultCode",
+                event_id: eventId,
+                occurred_at: new Date().toISOString(),
+                received_at: new Date().toISOString(),
+                vehicle_id: vehicleId,
+                vehicle_name: vehicleName || null,
+                driver_id: null,
+                driver_name: null,
+                severity,
+                title: `Fault Code ${spn}/${fmi}`,
+                description: `Engine fault detected: SPN ${spn}, FMI ${fmi}`,
+                status: "open",
+                acknowledged_by: null,
+                acknowledged_at: null,
+                resolved_at: null,
+                raw_payload: {
+                  source: "backfill",
+                  spn,
+                  fmi,
+                  warningIsOn,
+                  stopIsOn,
+                  checkEngineLights: lights,
+                },
+              };
+
+              const upsertResult = await upsertAlert(supabase, alert);
+              if (upsertResult.inserted) {
+                result.alertsInserted++;
+              } else if (upsertResult.isDuplicate) {
+                result.alertsDuplicate++;
+              } else {
+                result.alertsErrored++;
+                if (upsertResult.error) {
+                  result.errorSummary.push(`Vehicle ${vehicleId}: ${upsertResult.error}`);
+                }
+              }
             }
           }
         }
+      } catch (error) {
+        result.keysFailed++;
+        result.errorSummary.push(
+          `Error processing key: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+        console.error("[backfill] Error:", error);
       }
     }
 
