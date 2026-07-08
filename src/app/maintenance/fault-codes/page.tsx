@@ -64,18 +64,22 @@ type WebhookMonitorResponse = {
 
 type BackfillAlertsResponse = {
   ok?: boolean;
-  mode?: "dry-run" | "insert";
-  date?: string;
-  matchedVehicles?: number;
-  snapshotFallbackUsed?: boolean;
-  faultEntriesScanned?: number;
-  dtcRowsSeen?: number;
-  lightOnEntries?: number;
-  candidateAlerts?: number;
-  inserted?: number;
-  duplicates?: number;
-  errors?: number;
-  sourceErrors?: string[];
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  
+  keysProcessed?: number;
+  keysSucceeded?: number;
+  keysFailed?: number;
+  
+  vehiclesFound?: number;
+  alertsAttempted?: number;
+  alertsInserted?: number;
+  alertsDuplicate?: number;
+  alertsErrored?: number;
+  
+  errorSummary?: string[];
+  ingestionLogId?: string;
   error?: string;
 };
 
@@ -1624,16 +1628,16 @@ export default function MaintenanceFaultCodesPage() {
     }
 
     try {
-      const backfillResponse = await fetch("/api/maintenance/backfill-alerts", {
+      const backfillResponse = await fetch("/api/maintenance/backfill-bulletproof", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date: today, dryRun: false }),
       });
 
       const backfillData = (await backfillResponse.json().catch(() => ({}))) as BackfillAlertsResponse;
-      if (backfillResponse.ok && !backfillData.error) {
+      if (backfillResponse.ok && backfillData.ok && !backfillData.error) {
         notes.push(
-          `Backfill rows: Candidates ${backfillData.candidateAlerts ?? 0}, Inserted ${backfillData.inserted ?? 0}, Dup ${backfillData.duplicates ?? 0}.`
+          `Backfill: Keys ${backfillData.keysProcessed ?? 0}/${backfillData.keysSucceeded ?? 0}, Vehicles ${backfillData.vehiclesFound ?? 0}, Alerts Inserted ${backfillData.alertsInserted ?? 0}, Dup ${backfillData.alertsDuplicate ?? 0}.`
         );
       } else {
         notes.push(`Backfill skipped: ${backfillData.error ?? "Unauthorized or unavailable"}.`);
@@ -1975,7 +1979,7 @@ export default function MaintenanceFaultCodesPage() {
   async function triggerBackfillNow() {
     setBackfillRunning(true);
     try {
-      const response = await fetch("/api/maintenance/backfill-alerts", {
+      const response = await fetch("/api/maintenance/backfill-bulletproof", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dryRun: false, triggeredBy: "manual" }),
@@ -1984,16 +1988,17 @@ export default function MaintenanceFaultCodesPage() {
       const data = (await response.json().catch(() => ({}))) as BackfillAlertsResponse;
       if (response.ok && data.ok && !data.error) {
         setBackfillLastRun({
-          date: data.date ?? new Date().toISOString().slice(0, 10),
-          inserted: data.inserted ?? 0,
-          duplicates: data.duplicates ?? 0,
-          errors: data.errors ?? 0,
-          snapshot_fallback_used: data.snapshotFallbackUsed ?? false,
+          date: data.completedAt ?? new Date().toISOString().slice(0, 10),
+          inserted: data.alertsInserted ?? 0,
+          duplicates: data.alertsDuplicate ?? 0,
+          errors: data.alertsErrored ?? 0,
+          snapshot_fallback_used: false,
         });
         setErrorMessage(null);
         await loadFaultCodes(true);
       } else {
-        setErrorMessage(data.error ?? "Backfill failed");
+        const errorMsg = data.error || (data.errorSummary?.[0]) || "Backfill failed";
+        setErrorMessage(errorMsg);
       }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Backfill request failed");
@@ -2563,14 +2568,14 @@ export default function MaintenanceFaultCodesPage() {
                     <p className="mt-1 text-xs text-slate-400">No recent backfill run</p>
                   )}
                 </div>
-                {effectiveUsername && canUsePushTestControls && (
+                {effectiveUsername && canTriggerBackfill && (
                   <button
                     type="button"
                     onClick={() => void triggerBackfillNow()}
                     disabled={backfillRunning || refreshing || loadingData}
                     className="flex-shrink-0 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/20 disabled:opacity-50"
                   >
-                    {backfillRunning ? "Running..." : "Run Now"}
+                    {backfillRunning ? "Running..." : "Run Backfill Now"}
                   </button>
                 )}
               </div>
