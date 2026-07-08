@@ -118,7 +118,6 @@ type DriverScoreRow = {
   lowFuelEventsCount: number;
   idleRatio: number;
   avgFuelLevel: number | null;
-  riskSummary: string;
 };
 
 // Aggregated analytics response from /api/analytics/driver-window
@@ -326,16 +325,6 @@ function scoreDriverFromAnalytics(
   const tier: DriverScoreRow["tier"] = "on_track"; // Placeholder, reassigned later
 
   const weakest = Object.entries(pillar).sort((a, b) => a[1] - b[1])[0]?.[0] ?? "safety";
-  const riskSummary =
-    weakest === "idling"
-      ? "High idle ratio suggests inefficiency"
-      : weakest === "maintenance"
-        ? "Engine stress events indicate maintenance risk"
-        : weakest === "fuel"
-          ? "Fuel discipline needs improvement"
-          : weakest === "dvir"
-            ? "Compliance and defect pressure is high"
-            : "Safety metrics below target";
 
   return {
     key: metrics.driver_id,
@@ -354,7 +343,6 @@ function scoreDriverFromAnalytics(
     lowFuelEventsCount: metrics.low_fuel_events_total,
     idleRatio,
     avgFuelLevel,
-    riskSummary,
   };
 }
 
@@ -641,45 +629,37 @@ export default function DriverRankingPage() {
               {refreshing ? "Refreshing..." : "Refresh"}
             </button>
 
-            <Link
-              href="/reports/vehicle-ranking"
+            <button
+              onClick={() => router.back()}
               className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
             >
-              Vehicle Report
-            </Link>
+              ← Back
+            </button>
           </div>
-        </div>
-
-        <div className="rounded-xl border border-cyan-900/45 bg-slate-900/70 p-4 shadow-lg">
-          <p className="text-sm text-slate-200">
-            Live operational view for reward and intervention decisions.
-          </p>
-          <p className="mt-2 text-xs text-slate-400">
-            All DPI methodology and scoring literature is available in the DPI Help popup.
-          </p>
         </div>
 
         {error ? (
           <section className="rounded-xl border border-rose-700/40 bg-rose-950/25 p-3 text-sm text-rose-200">{error}</section>
         ) : null}
 
-        <section className="grid grid-cols-2 gap-2 md:grid-cols-4">
-          <article className="rounded-xl border border-slate-800 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-slate-400">Drivers Ranked</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-100">{summary.drivers}</p>
-          </article>
-          <article className="rounded-xl border border-emerald-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Top 10%</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-200">{summary.topPerformers}</p>
-          </article>
-          <article className="rounded-xl border border-rose-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Below Average</p>
-            <p className="mt-1 text-2xl font-semibold text-rose-200">{summary.actionNeeded}</p>
-          </article>
-          <article className="rounded-xl border border-cyan-700/35 bg-slate-900/65 p-3">
-            <p className="text-[11px] uppercase tracking-wide text-cyan-200/80">Fleet Avg DPI</p>
-            <p className="mt-1 text-2xl font-semibold text-cyan-100">{summary.avgScore}</p>
-          </article>
+        <section className="rounded-xl border border-slate-800 bg-slate-900/65 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-6">
+            <div className="flex flex-col">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Drivers Ranked</p>
+              <p className="text-2xl font-semibold text-slate-100">{summary.drivers}</p>
+            </div>
+            <div className="hidden border-r border-slate-700/50 sm:block" style={{ height: "40px" }} />
+            <div className="flex flex-col">
+              <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Top 10%</p>
+              <p className="text-2xl font-semibold text-emerald-200">{summary.topPerformers}</p>
+            </div>
+            <div className="hidden border-r border-slate-700/50 sm:block" style={{ height: "40px" }} />
+            <div className="flex flex-col">
+              <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Below Average</p>
+              <p className="text-2xl font-semibold text-rose-200">{summary.actionNeeded}</p>
+            </div>
+
+          </div>
         </section>
 
         <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
@@ -711,7 +691,7 @@ export default function DriverRankingPage() {
         ) : null}
 
         {!loading ? (
-          <section className="space-y-2">
+          <section className="space-y-2 pb-10 md:pb-6">
             {rankingRows.map((row, index) => {
               const styles = tierStyles(row.tier);
               const isExpanded = expandedDriverId === row.key;
@@ -723,34 +703,33 @@ export default function DriverRankingPage() {
               return (
                 <article
                   key={row.key}
-                  className={`cursor-pointer rounded-lg border transition ${styles.card} bg-slate-900/65 p-3 hover:bg-slate-900/80 md:p-4`}
+                  className={`cursor-pointer rounded-lg border transition ${styles.card} bg-slate-900/65 p-2 hover:bg-slate-900/80 md:p-3`}
                   onClick={() => handleExpandDriver(row.key)}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
                       <div className="flex items-baseline gap-2">
                         <p className="text-xs text-slate-500">#{index + 1}</p>
                         <h3 className="text-sm font-semibold text-slate-100">{row.driver}</h3>
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">Unit {row.trucks.join(" • ")}</p>
-                      <p className="mt-2 text-xs leading-relaxed text-slate-300">{row.riskSummary}</p>
+                      <p className="text-xs text-slate-400">Unit {row.trucks.join(" • ")}</p>
                     </div>
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex flex-col items-end gap-1">
                       <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${styles.badge}`}>
                         {styles.label}
                       </span>
-                      <div className="text-right">
-                        <p className="text-2xl font-bold text-cyan-100">{row.totalScore}</p>
+                      <div className="flex items-baseline gap-1">
+                        <p className="text-sm text-slate-400">{row.totalScore}</p>
                         <p className="text-[10px] text-slate-500">DPI</p>
                       </div>
                     </div>
                   </div>
 
                   {isExpanded && (
-                    <div className="mt-4 space-y-3 border-t border-slate-700/40 pt-4">
+                    <div className="mt-2 -mx-2 space-y-2 border-t border-slate-700/40 px-2 pt-2">
                       {/* Unified Incident History Heatmap */}
                       {expandedEventsLoading ? (
-                        <div className="rounded-md border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
+                        <div className="rounded-md border border-slate-700/60 bg-slate-900/80 px-2 py-2 text-xs text-slate-400">
                           Loading detailed incident history...
                         </div>
                       ) : heatmapCells && heatmapCells.length > 0 ? (
