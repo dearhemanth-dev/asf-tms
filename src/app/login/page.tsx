@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
-import type { AppRole } from "@/lib/auth";
+import { normalizeAppRole, type AppRole } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,6 +45,11 @@ export default function LoginPage() {
     };
   }, []);
 
+  function getNextRoute(role: AppRole | "driver") {
+    if (role === "admin") return "/admin";
+    return role === "maintenance" ? "/maintenance/fault-codes" : "/fleet";
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -54,6 +59,8 @@ export default function LoginPage() {
       const sanitized = username.trim().toLowerCase();
       const loginKey = sanitized.includes("@") ? sanitized.split("@")[0] : sanitized;
       const demoRoleByUser = {
+        hkadmin: "admin",
+        gsadmin: "admin",
         hkmaintenance: "maintenance",
         hkmanager: "management",
         gsmanager: "management",
@@ -70,16 +77,17 @@ export default function LoginPage() {
       const roleFromLogin = demoRoleByUser[loginKey as keyof typeof demoRoleByUser];
 
       if (roleFromLogin && password === "p") {
+        const nextRoute = getNextRoute(roleFromLogin);
         if (typeof window !== "undefined") {
           window.sessionStorage.setItem("demoUsername", loginKey);
           window.sessionStorage.setItem("demoRole", roleFromLogin);
           document.cookie = `asf_login=${encodeURIComponent(loginKey)}; path=/; max-age=28800; samesite=lax`;
           document.cookie = `asf_role=${encodeURIComponent(roleFromLogin)}; path=/; max-age=28800; samesite=lax`;
-          window.location.href = `/fleet?demoRole=${roleFromLogin}&ts=${Date.now()}`;
+          window.location.href = `${nextRoute}?demoRole=${roleFromLogin}&ts=${Date.now()}`;
           return;
         }
 
-        router.replace(`/fleet?demoRole=${roleFromLogin}`);
+        router.replace(`${nextRoute}?demoRole=${roleFromLogin}`);
         return;
       }
 
@@ -89,16 +97,18 @@ export default function LoginPage() {
           return;
         }
 
+        const nextRoute = getNextRoute(roleFromLogin);
+
         if (typeof window !== "undefined") {
           window.sessionStorage.setItem("demoUsername", loginKey);
           window.sessionStorage.setItem("demoRole", roleFromLogin);
           document.cookie = `asf_login=${encodeURIComponent(loginKey)}; path=/; max-age=28800; samesite=lax`;
           document.cookie = `asf_role=${encodeURIComponent(roleFromLogin)}; path=/; max-age=28800; samesite=lax`;
-          window.location.href = `/fleet?demoRole=${roleFromLogin}&ts=${Date.now()}`;
+          window.location.href = `${nextRoute}?demoRole=${roleFromLogin}&ts=${Date.now()}`;
           return;
         }
 
-        router.replace(`/fleet?demoRole=${roleFromLogin}`);
+        router.replace(`${nextRoute}?demoRole=${roleFromLogin}`);
         return;
       }
 
@@ -115,8 +125,8 @@ export default function LoginPage() {
         return;
       }
 
-      const role = userRow.UserType as AppRole;
-      const nextRoute = "/fleet";
+      const role = normalizeAppRole(userRow.UserType, "dispatch");
+      const nextRoute = getNextRoute(role);
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem("demoUsername", loginKey);
         window.sessionStorage.setItem("demoRole", role);

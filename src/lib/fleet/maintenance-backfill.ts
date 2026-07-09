@@ -390,8 +390,16 @@ async function notifyInsertedAlerts(tenantId: string, alerts: BackfillAlertRow[]
       fault: topCandidate?.title ?? "Critical maintenance fault detected",
       summary: `Immediate attention required across ${alertCandidates.length} critical event(s).`,
       action: "Review active faults, contact driver, and dispatch maintenance response.",
+      decision: "Confirm go/no-go for this unit before next dispatch commitment.",
+      collaboration: "Maintenance owns triage + repair plan; Manager owns route and customer impact decisions.",
+      financial: "Estimated exposure: high same-day repair and downtime risk if unresolved.",
+      liability: "Liability posture: elevated while critical condition remains open.",
+      guidance: "AI guidance: assign owner + ETA now, then post stakeholder update for operations alignment.",
+      decisionWindow: "Decision window: immediate (next 10-15 minutes).",
+      confidence: "Confidence: strong, based on critical event criteria from telematics backfill.",
       occurredAt,
       highlights: preview || "No additional fault highlights available",
+      audience: "maintenance,management",
     });
 
     const pushResult = await sendPushToTenant(

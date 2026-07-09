@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { APP_ROLES, type AppRole, type UserProfile } from "@/lib/auth";
+import { APP_ROLES, normalizeAppRole, type AppRole, type UserProfile } from "@/lib/auth";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 
 type TabKey = "users" | "drivers" | "mechanics" | "assets";
@@ -73,12 +73,36 @@ export default function AdminPage() {
   const [newAssetYear, setNewAssetYear] = useState("");
 
   const canManageMechanics = useMemo(
-    () => currentProfile?.role === "management" || currentProfile?.role === "accounts",
+    () => currentProfile?.role === "admin" || currentProfile?.role === "management" || currentProfile?.role === "accounts",
     [currentProfile?.role]
   );
 
   useEffect(() => {
     async function bootstrap() {
+      if (typeof window !== "undefined") {
+        const demoRoleRaw = window.sessionStorage.getItem("demoRole");
+        const demoRole = normalizeAppRole(demoRoleRaw, "management");
+        const demoUsername = window.sessionStorage.getItem("demoUsername") ?? "demoadmin";
+        const demoFullName = demoUsername
+          .split(/[._-]+/)
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
+
+        if (["admin", "management", "accounts"].includes(demoRole)) {
+          setCurrentProfile({
+            id: `demo:${demoUsername}`,
+            full_name: demoFullName || "ASF Admin",
+            role: demoRole,
+            tenant_id: null,
+          });
+          setTenant({ id: "demo", name: "Demo Tenant", code: "DEMO" });
+          setMessage("Demo admin mode is active. Data writes are disabled until a tenant session is connected.");
+          setLoading(false);
+          return;
+        }
+      }
+
       const supabase = getSupabaseBrowserClient();
       const {
         data: { session },
@@ -142,10 +166,11 @@ export default function AdminPage() {
 
       const profile: UserProfile = {
         ...profileBase,
+        role: normalizeAppRole(profileBase.role, "management"),
         tenant_id: tenantId,
       };
 
-      if (!["management", "accounts"].includes(profile.role)) {
+      if (!["admin", "management", "accounts"].includes(profile.role)) {
         router.replace("/tasks");
         return;
       }
@@ -401,6 +426,14 @@ export default function AdminPage() {
 
         {activeTab === "users" && (
           <section className="space-y-4">
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-950/20 p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200">Planned For Admin</p>
+              <h2 className="mt-2 text-base font-semibold text-amber-100">Fault Alert Recipient Management</h2>
+              <p className="mt-1 text-sm text-amber-100/90">
+                Configure who receives Fault Code alerts (start with Maintenance + Manager), with add/remove controls per tenant.
+              </p>
+            </div>
+
             <form onSubmit={createOnboardingRequest} className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4 md:grid-cols-4">
               <input
                 required
@@ -411,7 +444,7 @@ export default function AdminPage() {
               />
               <select
                 value={inviteRole}
-                onChange={(event) => setInviteRole(event.target.value as AppRole)}
+                onChange={(event) => setInviteRole(normalizeAppRole(event.target.value, "dispatch"))}
                 className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
               >
                 {APP_ROLES.map((role) => (
@@ -441,7 +474,7 @@ export default function AdminPage() {
                       <td className="px-3 py-2">
                         <select
                           value={user.role}
-                          onChange={(event) => void saveUserRole(user.id, event.target.value as AppRole)}
+                          onChange={(event) => void saveUserRole(user.id, normalizeAppRole(event.target.value, "dispatch"))}
                           className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1"
                         >
                           {APP_ROLES.map((role) => (

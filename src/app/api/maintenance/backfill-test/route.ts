@@ -98,7 +98,7 @@ export async function POST(): Promise<NextResponse> {
           message: `Found ${orgs.length} organization(s) with Samsara keys`,
           details: {
             configured_count: orgs.length,
-            orgs: orgs.map((o) => ({
+            orgs: (orgs as any[]).map((o: any) => ({
               name: o.organization_name,
               has_api_key: !!o.samsara_api_key,
               has_webhook_url: !!o.samsara_webhook_url,

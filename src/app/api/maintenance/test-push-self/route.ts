@@ -77,7 +77,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const result = await sendPushToTenant(
       {
-        tenantId: appUser.tenantId,
+        tenantId: null,
         username: appUser.username,
       },
       {

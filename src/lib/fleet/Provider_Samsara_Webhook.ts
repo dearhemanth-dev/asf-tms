@@ -628,8 +628,16 @@ export async function POST(request: Request): Promise<NextResponse> {
         fault: topCandidate?.title ?? "Critical maintenance fault detected",
         summary: `Immediate attention required across ${candidates.length} critical event(s).`,
         action: "Review active faults, contact driver, and dispatch maintenance response.",
+        decision: "Confirm go/no-go for this unit before next dispatch commitment.",
+        collaboration: "Maintenance owns technical triage; Manager owns dispatch impact and customer communication path.",
+        financial: "Estimated exposure: high same-day cost and downtime risk if this condition escalates in-service.",
+        liability: "Liability posture: elevated while unresolved due to potential safety/compliance impacts.",
+        guidance: "AI guidance: assign owner + ETA now, then publish route impact decision to stakeholders.",
+        decisionWindow: "Decision window: immediate (next 10-15 minutes).",
+        confidence: "Confidence: strong, based on active critical telematics event feed.",
         occurredAt,
         highlights: preview || "No additional fault highlights available",
+        audience: "maintenance,management",
       });
 
       const pushResult = await sendPushToTenant(

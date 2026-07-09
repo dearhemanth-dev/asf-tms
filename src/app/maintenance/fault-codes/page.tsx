@@ -100,6 +100,11 @@ type TestPushResponse = {
   staleRemoved?: number;
   errors?: string[];
   targets?: string[];
+  targetUserCount?: number;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  mode?: "tenant_broadcast" | "username_fanout";
   error?: string;
 };
 
@@ -119,6 +124,42 @@ type PushDiagnosticsResponse = {
   tenantId?: string | null;
   subscriptionCount?: number;
   error?: string;
+};
+type DeviceListResponse = {
+  ok?: boolean;
+  subscriptions?: Array<{
+    id: string;
+    endpoint: string;
+    status: "pending" | "verified" | "expired" | "revoked";
+    verified_at: string | null;
+    created_at: string;
+    updated_at: string;
+    last_seen_at: string;
+  }>;
+  hasVerifiedDevice?: boolean;
+  verifiedCount?: number;
+  pendingCount?: number;
+  expiredCount?: number;
+  revokedCount?: number;
+  error?: string;
+};
+type PushEnrollmentState = {
+  ready: boolean;
+  isOff: boolean;
+  label: string;
+  detail: string;
+  actionLabel?: string;
+  permission?: NotificationPermission | "unsupported";
+};
+
+type PushGuidePlatform = "android" | "iphone" | "other";
+
+type PushGuideContent = {
+  title: string;
+  steps: string[];
+  hint: string;
+  issueHelp: string[];
+  canTryOpenSettings: boolean;
 };
 
 type WebhookSettingsOrganization = {
@@ -316,6 +357,116 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   }
 
   return outputArray;
+}
+
+function arraysEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function inferPushGuidePlatform(userAgent: string): PushGuidePlatform {
+  const normalized = userAgent.toLowerCase();
+  if (normalized.includes("iphone") || normalized.includes("ipad") || normalized.includes("ipod")) {
+    return "iphone";
+  }
+  if (normalized.includes("android")) {
+    return "android";
+  }
+  return "other";
+}
+
+function pushGuidePlatformLabel(platform: PushGuidePlatform): string {
+  if (platform === "android") return "Android";
+  if (platform === "iphone") return "iPhone";
+  return "Other Phone";
+}
+
+function pushGuideSettingsButtonLabel(platform: PushGuidePlatform): string {
+  if (platform === "iphone") return "Show Me iPhone Steps";
+  if (platform === "other") return "Show Me Browser Steps";
+  return "Open Phone Browser Settings";
+}
+
+function buildPushGuide(platform: PushGuidePlatform, blocked: boolean): PushGuideContent {
+  if (platform === "iphone") {
+    return {
+      title: blocked ? "Fix iPhone Notifications" : "Turn On iPhone Alerts",
+      steps: blocked
+        ? [
+            "On your iPhone, open Settings.",
+            "Tap Notifications.",
+            "Tap Safari, then turn on Allow Notifications.",
+            "Go back to ASF TMS and tap I Did The Steps - Check.",
+          ]
+        : [
+            "Open ASF TMS in Safari on your iPhone.",
+            "Tap the Share button at the bottom of Safari.",
+            "Tap Add to Home Screen, then tap Add.",
+            "Open ASF TMS from your Home Screen.",
+            "Tap Turn Push On, then tap Allow.",
+          ],
+      hint: "Goal: status should show Push is on.",
+      issueHelp: [
+        "No Share button? Make sure you are in Safari, not inside another app browser.",
+        "No Allow pop-up? Tap Turn Push On again, then use the settings button below.",
+        "Still blocked? Restart Safari, reopen ASF TMS from Home Screen, and recheck.",
+      ],
+      canTryOpenSettings: true,
+    };
+  }
+
+  if (platform === "android") {
+    return {
+      title: blocked ? "Fix Android Notifications" : "Turn On Android Alerts",
+      steps: blocked
+        ? [
+            "Open Settings on your phone.",
+            "Tap Apps, then Chrome, then Notifications.",
+            "Turn on Allow Notifications.",
+          "At the bottom, tap Configure in Chrome.",
+          "Open Not allowed, find asf-tms, and change it to Allow.",
+            "Return to ASF TMS and tap I Did The Steps - Check.",
+          ]
+        : [
+            "Open ASF TMS in Chrome on your Android phone.",
+            "Tap Turn Push On.",
+            "Tap Allow when Android asks.",
+          "If no pop-up appears, open Settings > Apps > Chrome > Notifications and turn on Allow Notifications.",
+          "Then tap Configure in Chrome, open Not allowed, find asf-tms, and change it to Allow.",
+          ],
+      hint: "Goal: status should show Push is on.",
+      issueHelp: [
+        "No pop-up? Close and reopen Chrome, then tap Turn Push On again.",
+        "If blocked, use settings button below, then check Configure in Chrome > Not allowed.",
+        "If still off, check battery saver is not restricting Chrome notifications.",
+      ],
+      canTryOpenSettings: true,
+    };
+  }
+
+  return {
+    title: blocked ? "Fix Phone Notifications" : "Turn On Phone Alerts",
+    steps: blocked
+      ? [
+          "Open your phone browser settings for this site.",
+          "Set Notifications to Allow.",
+          "Return to ASF TMS and tap I Did The Steps - Check.",
+        ]
+      : [
+          "Open ASF TMS in your phone browser.",
+          "Tap Turn Push On, then allow notifications.",
+          "If you do not see a pop-up, use browser site permissions to allow notifications.",
+        ],
+    hint: "Goal: status should show Push is on.",
+    issueHelp: [
+      "No pop-up? Tap Turn Push On again.",
+      "Still blocked? Use settings button below and allow notifications for this site.",
+    ],
+    canTryOpenSettings: true,
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1309,6 +1460,10 @@ export default function MaintenanceFaultCodesPage() {
   const canUseWebhookControls = effectiveUsername === "hkmaintenance"; // Dev-only: webhook config
   const canTriggerBackfill = effectiveUsername === "hkmaintenance";   // Dev-only: manual backfill
   const canEnrollPushOnDevice = Boolean(effectiveUsername) && effectiveRole === "maintenance";
+  const detectedPushGuidePlatform = useMemo<PushGuidePlatform>(() => {
+    if (typeof navigator === "undefined") return "android";
+    return inferPushGuidePlatform(navigator.userAgent);
+  }, []);
 
   const [loadingData, setLoadingData] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1342,6 +1497,14 @@ export default function MaintenanceFaultCodesPage() {
   const [pushWorkflowLoading, setPushWorkflowLoading] = useState(false);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [pushAssistantStarted, setPushAssistantStarted] = useState(false);
+  const [pushSettingsInlineHelp, setPushSettingsInlineHelp] = useState<string[] | null>(null);
+  const [pushSettingsInlineTitle, setPushSettingsInlineTitle] = useState<string | null>(null);
+  const [pushEnrollmentState, setPushEnrollmentState] = useState<PushEnrollmentState | null>(null);
+  const [pushEnrollmentLoading, setPushEnrollmentLoading] = useState(false);
+  const pushGuide = useMemo<PushGuideContent>(() => {
+    return buildPushGuide(detectedPushGuidePlatform, pushEnrollmentState?.permission === "denied");
+  }, [detectedPushGuidePlatform, pushEnrollmentState?.permission]);
   const [webhookSettingsLoading, setWebhookSettingsLoading] = useState(false);
   const [webhookSettingsSaving, setWebhookSettingsSaving] = useState(false);
   const [webhookSettingsError, setWebhookSettingsError] = useState<string | null>(null);
@@ -1365,6 +1528,23 @@ export default function MaintenanceFaultCodesPage() {
     errors: number;
     snapshot_fallback_used: boolean;
   } | null>(null);
+  const [backfillStatus, setBackfillStatus] = useState<{
+    id: string;
+    triggeredBy: string;
+    completedAt: string;
+    durationMs: number;
+    keysProcessed: number;
+    keysSucceeded: number;
+    keysFailed: number;
+    vehiclesFound: number;
+    alertsAttempted: number;
+    alertsInserted: number;
+    alertsDuplicate: number;
+    alertsErrored: number;
+    errorCount: number;
+    errorSummary: string[];
+  } | null>(null);
+  const [backfillStatusError, setBackfillStatusError] = useState<string | null>(null);
 
   const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplay | null>(null);
   const [activeRepairCardByVehicle, setActiveRepairCardByVehicle] = useState<Record<string, number>>({});
@@ -1484,83 +1664,96 @@ export default function MaintenanceFaultCodesPage() {
     }
 
     async function init() {
-      const supabase = getSupabaseBrowserClient();
+      try {
+        const supabase = getSupabaseBrowserClient();
 
-      const cookieUsername =
-        typeof window !== "undefined"
-          ? (document.cookie
-              .split(";")
-              .map((part) => part.trim())
-              .find((part) => part.startsWith("asf_login="))
-              ?.split("=")[1] ?? "")
-          : "";
-      const username =
-        typeof window !== "undefined"
-          ? window.sessionStorage.getItem("demoUsername") ?? decodeURIComponent(cookieUsername)
-          : null;
+        const cookieUsername =
+          typeof window !== "undefined"
+            ? (document.cookie
+                .split(";")
+                .map((part) => part.trim())
+                .find((part) => part.startsWith("asf_login="))
+                ?.split("=")[1] ?? "")
+            : "";
+        const username =
+          typeof window !== "undefined"
+            ? window.sessionStorage.getItem("demoUsername") ?? decodeURIComponent(cookieUsername)
+            : null;
 
-      if (username) {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem("demoUsername", username);
+        if (username) {
+          if (typeof window !== "undefined") {
+            window.sessionStorage.setItem("demoUsername", username);
+          }
+
+          const { data: userRow, error: userRowError } = await supabase
+            .from("Users")
+            .select("id, full_name, tenant_id, UserName, UserType")
+            .eq("UserName", username)
+            .maybeSingle();
+
+          if (userRowError) {
+            throw userRowError;
+          }
+
+          if (userRow) {
+            const userProfile: UserProfile = {
+              id: userRow.id,
+              full_name: userRow.full_name || username,
+              role: userRow.UserType as AppRole,
+              tenant_id: userRow.tenant_id,
+              username: userRow.UserName || username,
+            };
+            setProfile(userProfile);
+            return;
+          }
         }
 
-        const { data: userRow } = await supabase
-          .from("Users")
-          .select("id, full_name, tenant_id, UserName, UserType")
-          .eq("UserName", username)
-          .maybeSingle();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-        if (userRow) {
-          const userProfile: UserProfile = {
-            id: userRow.id,
-            full_name: userRow.full_name || username,
-            role: userRow.UserType as AppRole,
-            tenant_id: userRow.tenant_id,
-            username: userRow.UserName || username,
-          };
-          setProfile(userProfile);
-          setLoadingProfile(false);
+        if (!session) {
+          router.replace("/login");
           return;
         }
-      }
 
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, full_name, role, tenant_id")
-        .eq("id", session.user.id)
-        .maybeSingle();
-
-      if (!data || error) {
-        const fullName = (session.user.user_metadata.full_name as string | undefined) ?? "ASF User";
-        const upsertRole: AppRole = "management";
-
-        const { data: inserted } = await supabase
+        const { data, error } = await supabase
           .from("profiles")
-          .upsert({
-            id: session.user.id,
-            full_name: fullName,
-            role: upsertRole,
-          })
           .select("id, full_name, role, tenant_id")
-          .single();
+          .eq("id", session.user.id)
+          .maybeSingle();
 
-        if (inserted) {
-          setProfile(inserted as UserProfile);
+        if (!data || error) {
+          const fullName = (session.user.user_metadata.full_name as string | undefined) ?? "ASF User";
+          const upsertRole: AppRole = "management";
+
+          const { data: inserted, error: insertedError } = await supabase
+            .from("profiles")
+            .upsert({
+              id: session.user.id,
+              full_name: fullName,
+              role: upsertRole,
+            })
+            .select("id, full_name, role, tenant_id")
+            .single();
+
+          if (insertedError) {
+            throw insertedError;
+          }
+
+          if (inserted) {
+            setProfile(inserted as UserProfile);
+          }
+        } else {
+          setProfile(data as UserProfile);
         }
-      } else {
-        setProfile(data as UserProfile);
+      } catch (error) {
+        console.error("[maintenance-fault-codes:init]", error);
+        setErrorMessage("Unable to load your maintenance session. Please sign in again.");
+        router.replace("/login");
+      } finally {
+        setLoadingProfile(false);
       }
-
-      setLoadingProfile(false);
     }
 
     void init();
@@ -1675,19 +1868,29 @@ export default function MaintenanceFaultCodesPage() {
     }
 
     try {
-      console.log("[Push] Starting push registration...");
+      console.log("[Push] Starting device enrollment...");
       await logPushAction("onboarding_enable_clicked", "info", {
         preserveStatus,
       });
 
+      // Check browser support
       if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        const missingServiceWorker = !("serviceWorker" in navigator);
+        const insecureContext = typeof window !== "undefined" && !window.isSecureContext;
+        const unsupportedMessage = missingServiceWorker && insecureContext
+          ? "Push notifications require HTTPS on mobile devices. Open this page on your secure deployed URL instead of a local IP address."
+          : "This browser does not support push notifications.";
+
         console.error("[Push] Browser missing required APIs");
         await logPushAction("onboarding_unsupported_browser", "failed", {
           serviceWorker: "serviceWorker" in navigator,
           pushManager: "PushManager" in window,
           notification: "Notification" in window,
-        }, "This browser does not support push notifications.");
-        setPushError("This browser does not support push notifications.");
+          isSecureContext: typeof window !== "undefined" ? window.isSecureContext : null,
+          protocol: typeof window !== "undefined" ? window.location.protocol : null,
+          host: typeof window !== "undefined" ? window.location.host : null,
+        }, unsupportedMessage);
+        setPushError(unsupportedMessage);
         return false;
       }
 
@@ -1703,9 +1906,11 @@ export default function MaintenanceFaultCodesPage() {
 
       console.log("[Push] VAPID key present");
 
+      // Register service worker
       const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
       console.log("[Push] Service Worker registered:", registration.scope);
 
+      // Request notification permission
       const permission = await Notification.requestPermission();
       console.log("[Push] Notification permission:", permission);
       await logPushAction("onboarding_permission_result", permission === "granted" ? "success" : "failed", {
@@ -1717,41 +1922,122 @@ export default function MaintenanceFaultCodesPage() {
         return false;
       }
 
+      // Get or create push subscription
+      const expectedServerKey = urlBase64ToUint8Array(vapidPublicKey);
       let subscription = await registration.pushManager.getSubscription();
       console.log("[Push] Existing subscription:", subscription ? "found" : "not found");
+
+      if (subscription) {
+        const existingServerKey = subscription.options.applicationServerKey;
+        const existingServerKeyBytes = existingServerKey ? new Uint8Array(existingServerKey) : null;
+        const matchesCurrentKey = existingServerKeyBytes
+          ? arraysEqual(existingServerKeyBytes, expectedServerKey)
+          : false;
+
+        if (!matchesCurrentKey) {
+          console.log("[Push] Existing subscription bound to older VAPID key. Re-subscribing...");
+          await subscription.unsubscribe();
+          subscription = null;
+          await logPushAction("onboarding_resubscribe_after_key_rotation", "info", {
+            hadExistingServerKey: Boolean(existingServerKeyBytes),
+          });
+        }
+      }
 
       if (!subscription) {
         console.log("[Push] Creating new subscription...");
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as unknown as BufferSource,
+          applicationServerKey: expectedServerKey as unknown as BufferSource,
         });
-        console.log("[Push] New subscription created, endpoint:", subscription.endpoint.substring(0, 50));
+        console.log("[Push] New subscription created");
       }
 
-      console.log("[Push] Sending subscription to server...");
-      const response = await fetch("/api/maintenance/register-device", {
+      // Extract VAPID keys from subscription
+      const p256dhKey = subscription.getKey("p256dh");
+      const authKey = subscription.getKey("auth");
+      
+      if (!p256dhKey || !authKey) {
+        throw new Error("Failed to extract encryption keys from subscription");
+      }
+
+      // Convert keys to base64
+      const p256dh = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(p256dhKey))));
+      const auth = btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(authKey))));
+
+      console.log("[Push] Extracted VAPID keys, endpoint:", subscription.endpoint.substring(0, 50));
+
+      // Step 1: Enroll device via normalized API
+      console.log("[Push] Enrolling device...");
+      const enrollResponse = await fetch("/api/maintenance/device/enroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription }),
+        body: JSON.stringify({
+          endpoint: subscription.endpoint,
+          p256dh,
+          auth,
+          userAgent: navigator.userAgent,
+        }),
       });
 
-      const data = (await response.json().catch(() => ({}))) as { error?: string; ok?: boolean };
-      console.log("[Push] Server response:", response.status, data);
+      const enrollData = (await enrollResponse.json().catch(() => ({}))) as {
+        subscriptionId?: string;
+        status?: string;
+        message?: string;
+        error?: string;
+      };
 
-      if (!response.ok || !data.ok) {
-        await logPushAction("onboarding_register_device_failed", "failed", {
-          responseStatus: response.status,
-        }, data.error ?? "Unable to register this device for push alerts.");
-        setPushError(data.error ?? "Unable to register this device for push alerts.");
+      console.log("[Push] Enroll response:", enrollResponse.status, enrollData);
+
+      if (!enrollResponse.ok || !enrollData.subscriptionId) {
+        await logPushAction("onboarding_enroll_failed", "failed", {
+          responseStatus: enrollResponse.status,
+        }, enrollData.error ?? "Failed to enroll device.");
+        setPushError(enrollData.error ?? "Failed to enroll device.");
         return false;
       }
 
-      console.log("[Push] Registration successful!");
-      await logPushAction("onboarding_register_device_success", "success", {
-        hasExistingSubscription: Boolean(subscription),
+      const subscriptionId = enrollData.subscriptionId;
+      console.log("[Push] Device enrolled:", subscriptionId, "Status:", enrollData.status);
+
+      // Step 2: Initiate verification challenge
+      console.log("[Push] Creating verification challenge...");
+      const verifyStartResponse = await fetch("/api/maintenance/device/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscriptionId }),
       });
-      setPushMessage("Push alerts enabled for this device.");
+
+      const verifyStartData = (await verifyStartResponse.json().catch(() => ({}))) as {
+        challengeId?: string;
+        challengeToken?: string;
+        expiresAt?: string;
+        message?: string;
+        error?: string;
+      };
+
+      console.log("[Push] Verify start response:", verifyStartResponse.status, verifyStartData);
+
+      if (!verifyStartResponse.ok || !verifyStartData.challengeToken) {
+        await logPushAction("onboarding_verify_start_failed", "failed", {
+          responseStatus: verifyStartResponse.status,
+        }, verifyStartData.error ?? "Failed to start verification.");
+        setPushError(verifyStartData.error ?? "Failed to start verification.");
+        return false;
+      }
+
+      console.log("[Push] Verification challenge created");
+      await logPushAction("onboarding_verify_started", "info", {
+        subscriptionId,
+        challengeId: verifyStartData.challengeId,
+      });
+
+      // Show success message with verification instructions
+      setPushMessage(
+        "Device enrolled! Look for a verification notification on your phone. Tap it to confirm this device."
+      );
+      await refreshPushEnrollmentState();
+
       return true;
     } catch (error) {
       console.error("[Push] Error:", error);
@@ -1766,6 +2052,141 @@ export default function MaintenanceFaultCodesPage() {
     } finally {
       setPushEnableLoading(false);
     }
+  }
+
+  async function handlePushEnrollmentAction(): Promise<void> {
+    if (typeof window === "undefined") return;
+
+    // "Check This Phone" should be a safe status refresh, not a new enrollment attempt.
+    if (pushEnrollmentState?.isOff === false) {
+      setPushError(null);
+      setPushMessage("Checking this phone now...");
+      await refreshPushEnrollmentState();
+      setPushMessage("Done. Push status refreshed for this phone.");
+      return;
+    }
+
+    if ("Notification" in window && Notification.permission === "denied") {
+      const blockedMessage = "Notifications are currently blocked for this site. No worries, follow the Setup Assistant below, then tap I Enabled It - Recheck.";
+      setPushMessage(null);
+      setPushError(blockedMessage);
+      setPushAssistantStarted(true);
+      setPushSettingsInlineTitle("Let\'s fix it");
+      setPushSettingsInlineHelp(pushGuide.steps);
+      await logPushAction("onboarding_permission_blocked_requires_settings", "info", {
+        permission: Notification.permission,
+        userAgent: navigator.userAgent,
+      }, blockedMessage);
+      return;
+    }
+
+    await enablePushAlerts();
+  }
+
+  function startPushFixFlow(): void {
+    setPushAssistantStarted(true);
+    setPushMessage(null);
+    setPushError(null);
+    setPushSettingsInlineTitle("Do these steps in order");
+    setPushSettingsInlineHelp(pushGuide.steps);
+  }
+
+  function openBrowserNotificationSettings(): void {
+    if (typeof window === "undefined") return;
+
+    if (detectedPushGuidePlatform === "iphone") {
+      setPushMessage(null);
+      setPushError(null);
+      setPushAssistantStarted(true);
+      setPushSettingsInlineTitle("iPhone steps");
+      setPushSettingsInlineHelp([
+        "Open iPhone Settings.",
+        "Tap Notifications, then Safari, then turn on Allow Notifications.",
+        "Return here and tap I Did The Steps - Check.",
+      ]);
+      return;
+    }
+
+    if (detectedPushGuidePlatform === "other") {
+      setPushMessage(null);
+      setPushError(null);
+      setPushAssistantStarted(true);
+      setPushSettingsInlineTitle("Browser steps");
+      setPushSettingsInlineHelp([
+        "Open your phone browser settings for this site.",
+        "Set Notifications to Allow.",
+        "Return here and tap I Did The Steps - Check.",
+      ]);
+      return;
+    }
+
+    const site = encodeURIComponent(window.location.origin);
+    const chromeSettingsUrl = `chrome://settings/content/siteDetails?site=${site}`;
+
+    let opened = false;
+    try {
+      const popup = window.open(chromeSettingsUrl, "_blank");
+      opened = Boolean(popup);
+    } catch {
+      opened = false;
+    }
+
+    if (opened) {
+      setPushMessage("Browser settings opened.");
+      setPushError(null);
+      setPushAssistantStarted(true);
+      setPushSettingsInlineTitle("Android steps");
+      setPushSettingsInlineHelp([
+        "Set Notifications for this site to Allow.",
+        "If needed, open Android Settings > Apps > Chrome > Notifications and allow.",
+        "Tap Configure in Chrome, open Not allowed, find asf-tms, and change it to Allow.",
+        "Return here and tap I Did The Steps - Check.",
+      ]);
+      return;
+    }
+
+    setPushMessage(null);
+    setPushError(null);
+    setPushAssistantStarted(true);
+    setPushSettingsInlineTitle("Android steps");
+    setPushSettingsInlineHelp([
+      "Open Android Settings.",
+      "Tap Apps > Chrome > Notifications, then turn on Allow Notifications.",
+      "Tap Configure in Chrome, open Not allowed, find asf-tms, and change it to Allow.",
+      "Return to this page and tap I Did The Steps - Check.",
+    ]);
+  }
+
+  async function recheckPushAfterSettingsChange(): Promise<void> {
+    if (typeof window === "undefined") return;
+
+    setPushSettingsInlineHelp(null);
+    setPushSettingsInlineTitle(null);
+    setPushError(null);
+    setPushMessage("Rechecking notification permission...");
+    await refreshPushEnrollmentState();
+
+    if (!("Notification" in window)) {
+      setPushMessage(null);
+      setPushError("This browser does not support notifications for this app.");
+      return;
+    }
+
+    if (Notification.permission === "denied") {
+      setPushMessage(null);
+      setPushError("Notifications are still blocked. Please change this site to Allow in browser settings, then tap recheck again.");
+      return;
+    }
+
+    const enrolled = await enablePushAlerts({ preserveStatus: true });
+    if (!enrolled) {
+      setPushMessage(null);
+      return;
+    }
+
+    setPushAssistantStarted(false);
+    setPushMessage("Great. Notifications are allowed again and this phone was rechecked.");
+    await refreshPushEnrollmentState();
   }
 
   async function sendTestPush(options?: { preserveStatus?: boolean }): Promise<TestPushResponse | null> {
@@ -1785,11 +2206,21 @@ export default function MaintenanceFaultCodesPage() {
 
       const data = (await response.json().catch(() => ({}))) as TestPushResponse;
       if (!response.ok || data.error || !data.ok) {
-        setPushError(data.error ?? "Unable to send test push alert.");
+        const deliveryStats =
+          typeof data.sent === "number" && typeof data.attempted === "number"
+            ? ` (${data.sent}/${data.attempted} delivered)`
+            : "";
+        const errorHint =
+          Array.isArray(data.errors) && data.errors.length > 0
+            ? ` ${data.errors[0]}`
+            : "";
+        setPushError(data.error ?? `Unable to send test push alert${deliveryStats}.${errorHint}`.trim());
         return null;
       }
 
-      setPushMessage(`Test push sent to ${data.sent ?? 0}/${data.attempted ?? 0} device(s).`);
+      const userCountText = data.targetUserCount && data.targetUserCount > 0 ? ` across ${data.targetUserCount} user(s)` : "";
+      const durationText = typeof data.durationMs === "number" ? ` in ${Math.max(1, Math.round(data.durationMs / 1000))}s` : "";
+      setPushMessage(`Team broadcast test sent to ${data.sent ?? 0}/${data.attempted ?? 0} device(s)${userCountText}${durationText}.`);
       return data;
     } catch (error) {
       setPushError(error instanceof Error ? error.message : "Unable to send test push alert.");
@@ -1839,6 +2270,117 @@ export default function MaintenanceFaultCodesPage() {
       return data;
     } catch (error) {
       return { error: error instanceof Error ? error.message : "Unable to load push diagnostics." };
+    }
+  }
+
+  async function refreshPushEnrollmentState(): Promise<void> {
+    if (!canEnrollPushOnDevice || typeof window === "undefined") {
+      setPushEnrollmentState(null);
+      return;
+    }
+
+    setPushEnrollmentLoading(true);
+
+    try {
+      const hasNotificationApi = "Notification" in window;
+      const hasServiceWorkerApi = "serviceWorker" in navigator;
+      const hasPushManagerApi = "PushManager" in window;
+      const permission = hasNotificationApi ? Notification.permission : "unsupported";
+      const secureContext = window.isSecureContext;
+
+      if (!hasNotificationApi || !hasPushManagerApi || !hasServiceWorkerApi) {
+        const detail = !secureContext && !hasServiceWorkerApi
+          ? "Push requires the secure deployed URL on mobile devices. Open this page over HTTPS to turn alerts back on."
+          : "This browser cannot keep web push enabled for this app.";
+
+        setPushEnrollmentState({
+          ready: true,
+          isOff: true,
+          label: "Push is off",
+          detail,
+          permission,
+        });
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.getRegistration("/")
+        ?? await navigator.serviceWorker.getRegistration();
+      const browserSubscription = registration ? await registration.pushManager.getSubscription() : null;
+      const browserEndpoint = browserSubscription?.endpoint ?? null;
+
+      const response = await fetch("/api/maintenance/device/list", { cache: "no-store" });
+      const data = (await response.json().catch(() => ({}))) as DeviceListResponse;
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to load device registrations.");
+      }
+
+      const currentDeviceSubscription = browserEndpoint
+        ? (data.subscriptions ?? []).find((subscription) => subscription.endpoint === browserEndpoint) ?? null
+        : null;
+      const currentDeviceIsActive = currentDeviceSubscription
+        ? currentDeviceSubscription.status === "pending" || currentDeviceSubscription.status === "verified"
+        : false;
+
+      if (permission === "denied") {
+        setPushEnrollmentState({
+          ready: true,
+          isOff: true,
+          label: "Push is off",
+          detail: "Notifications are blocked for this site on this phone. Follow the Setup Assistant below step-by-step, then tap I Enabled It - Recheck.",
+          actionLabel: "Browser Settings Required",
+          permission,
+        });
+        return;
+      }
+
+      if (!browserSubscription) {
+        setPushEnrollmentState({
+          ready: true,
+          isOff: true,
+          label: "Push is off",
+          detail: permission === "granted"
+            ? "Notifications are allowed, but this phone is not currently subscribed. Tap below to turn push back on."
+            : "This device has not finished push setup yet. Tap below to turn push on.",
+          actionLabel: permission === "granted" ? "Turn Push Back On" : "Turn Push On",
+          permission,
+        });
+        return;
+      }
+
+      if (!currentDeviceIsActive) {
+        setPushEnrollmentState({
+          ready: true,
+          isOff: true,
+          label: "Push is off",
+          detail: "This browser still has a push subscription, but the server no longer has an active registration for this phone. Tap below to resync push on this device.",
+          actionLabel: "Resync This Phone",
+          permission,
+        });
+        return;
+      }
+
+      setPushEnrollmentState({
+        ready: true,
+        isOff: false,
+        label: "Push is on",
+        detail: currentDeviceSubscription?.status === "verified"
+          ? "This device is registered and ready to receive maintenance alerts."
+          : "This device is registered. Complete any verification steps if the browser prompts you.",
+        actionLabel: "Check This Phone",
+        permission,
+      });
+    } catch (error) {
+      setPushEnrollmentState({
+        ready: true,
+        isOff: true,
+        label: "Push status unavailable",
+        detail: error instanceof Error ? error.message : "Unable to check push status for this device.",
+        actionLabel: "Check This Phone",
+        permission: "unsupported",
+      });
+    } finally {
+      setPushEnrollmentLoading(false);
     }
   }
 
@@ -1996,6 +2538,13 @@ export default function MaintenanceFaultCodesPage() {
         });
         setErrorMessage(null);
         await loadFaultCodes(true);
+        // Reload backfill status to show latest run details
+        const statusResponse = await fetch("/api/maintenance/backfill-status", { cache: "no-store" });
+        const statusData = (await statusResponse.json().catch(() => ({}))) as { ok?: boolean; lastRun?: any; error?: string };
+        if (statusResponse.ok && statusData.ok) {
+          setBackfillStatus(statusData.lastRun ?? null);
+          setBackfillStatusError(null);
+        }
       } else {
         const errorMsg = data.error || (data.errorSummary?.[0]) || "Backfill failed";
         setErrorMessage(errorMsg);
@@ -2049,6 +2598,47 @@ export default function MaintenanceFaultCodesPage() {
   }, [loadingProfile, effectiveRole]);
 
   useEffect(() => {
+    if (!pushEnrollmentState?.isOff) {
+      setPushAssistantStarted(false);
+      setPushSettingsInlineHelp(null);
+      setPushSettingsInlineTitle(null);
+    }
+  }, [pushEnrollmentState?.isOff]);
+
+  useEffect(() => {
+    if (loadingProfile || effectiveRole !== "maintenance") return;
+
+    let cancelled = false;
+
+    async function loadBackfillStatus() {
+      try {
+        const response = await fetch("/api/maintenance/backfill-status", { cache: "no-store" });
+        const data = (await response.json().catch(() => ({}))) as { ok?: boolean; lastRun?: any; error?: string };
+        if (cancelled) return;
+
+        if (!response.ok || !data.ok) {
+          setBackfillStatus(null);
+          setBackfillStatusError(data.error ?? "Unable to load backfill status.");
+          return;
+        }
+
+        setBackfillStatus(data.lastRun ?? null);
+        setBackfillStatusError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setBackfillStatus(null);
+        setBackfillStatusError(error instanceof Error ? error.message : "Unable to load backfill status.");
+      }
+    }
+
+    void loadBackfillStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadingProfile, effectiveRole, backfillRunning]);
+
+  useEffect(() => {
     if (loadingProfile || effectiveRole !== "maintenance") return;
 
     let cancelled = false;
@@ -2090,6 +2680,29 @@ export default function MaintenanceFaultCodesPage() {
     if (loadingProfile || effectiveRole !== "maintenance" || !canUseWebhookControls) return;
     void loadPushAuditLog();
   }, [loadingProfile, effectiveRole, canUseWebhookControls, refreshing]);
+
+  useEffect(() => {
+    if (loadingProfile || effectiveRole !== "maintenance" || !canEnrollPushOnDevice) return;
+
+    const refreshStatus = () => {
+      void refreshPushEnrollmentState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshStatus();
+      }
+    };
+
+    refreshStatus();
+    window.addEventListener("focus", refreshStatus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", refreshStatus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadingProfile, effectiveRole, canEnrollPushOnDevice, refreshing]);
 
   useEffect(() => {
     const selected = webhookSettingsOrgs.find((org) => org.id === selectedWebhookOrgId);
@@ -2453,44 +3066,31 @@ export default function MaintenanceFaultCodesPage() {
               <p className="mt-1 text-xs text-slate-400">
                 {canUsePushTestControls
                   ? "Push testing users can run a single workflow action for quick validation."
-                  : "Enable push once on this phone. hkmaintenance can then run broadcast push tests to enrolled users."}
+                  : "Enable push notifications on this phone to receive maintenance alerts in real time."}
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {canUsePushTestControls && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void restartPushTestWorkflow()}
-                    disabled={pushLoading || refreshing || loadingData}
-                    className="rounded-md border border-cyan-400/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {pushWorkflowLoading ? "Preparing + Restarting Push..." : "Restart Push Test"}
-                  </button>
-                </>
-              )}
-
-              {!canUsePushTestControls && canEnrollPushOnDevice && (
+            {canUsePushTestControls && (
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => void enablePushAlerts()}
+                  onClick={() => void restartPushTestWorkflow()}
                   disabled={pushLoading || refreshing || loadingData}
-                  className="rounded-md border border-sky-500/45 bg-sky-700/25 px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-md border border-cyan-400/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {pushEnableLoading ? "Enabling Push..." : "Enable Push on This Phone"}
+                  {pushWorkflowLoading ? "Preparing + Restarting Push..." : "Restart Push Test"}
                 </button>
-              )}
 
-              <button
-                type="button"
-                onClick={() => void loadFaultCodes(true)}
-                disabled={refreshing || loadingData || pushLoading}
-                className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {refreshing ? "Refreshing..." : "Refresh"}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => void loadFaultCodes(true)}
+                  disabled={refreshing || loadingData || pushLoading}
+                  className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {refreshing ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3">
@@ -2498,6 +3098,9 @@ export default function MaintenanceFaultCodesPage() {
               <p className="text-xs uppercase tracking-wide text-slate-400">Total Fault Records</p>
               <p className="mt-1 text-2xl font-extrabold text-amber-200">{totalFaults}</p>
             </article>
+
+            {/* DEV/OPS ONLY: Webhook Health Monitor */}
+            {canUseWebhookControls && (
             <article className="rounded-lg border border-slate-700 bg-slate-950/60 p-3">
               <p className="text-xs uppercase tracking-wide text-slate-400">Webhook Health (24h)</p>
               {monitorError ? (
@@ -2542,30 +3145,45 @@ export default function MaintenanceFaultCodesPage() {
                 </>
               )}
             </article>
+            )}
 
-            {/* Backfill Status Monitor */}
+            {/* DEV/OPS ONLY: Backfill Status Monitor */}
+            {canUseWebhookControls && (
             <article className="rounded-lg border border-cyan-600/35 bg-slate-950/60 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex-1">
                   <p className="text-xs uppercase tracking-wide text-cyan-300">Backfill Status (Primary Layer)</p>
-                  {backfillLastRun ? (
+                  {backfillStatusError ? (
+                    <p className="mt-1 text-xs text-rose-300">{backfillStatusError}</p>
+                  ) : backfillStatus ? (
                     <>
                       <p className="mt-2 text-xs text-slate-200">
-                        Last run: <span className="font-mono text-cyan-200">{backfillLastRun.date}</span>
+                        Last run: <span className="font-mono text-cyan-200">{new Date(backfillStatus.completedAt).toLocaleDateString()} {new Date(backfillStatus.completedAt).toLocaleTimeString()}</span>
                       </p>
                       <p className="mt-1 text-xs text-slate-300">
-                        Result: <span className="text-emerald-300 font-semibold">{backfillLastRun.inserted}</span> inserted
-                        {backfillLastRun.duplicates > 0 && `, ${backfillLastRun.duplicates} duplicates`}
-                        {backfillLastRun.errors > 0 && `, ${backfillLastRun.errors} errors`}
+                        Duration: <span className="text-slate-200">{backfillStatus.durationMs}ms</span> | By: <span className="text-slate-200">{backfillStatus.triggeredBy}</span>
                       </p>
-                      {backfillLastRun.snapshot_fallback_used && (
-                        <p className="mt-1 text-xs text-amber-300">
-                          ⚠ Snapshot fallback used (no time-window data)
+                      <p className="mt-2 text-xs text-slate-400">
+                        Keys: <span className="text-slate-200">{backfillStatus.keysSucceeded}/{backfillStatus.keysProcessed}</span> processed
+                        {backfillStatus.keysFailed > 0 && <span className="text-rose-300"> ({backfillStatus.keysFailed} failed)</span>}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Vehicles: <span className="text-slate-200">{backfillStatus.vehiclesFound}</span> found, <span className="text-slate-200">{backfillStatus.alertsAttempted}</span> alerts attempted
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Result: <span className="text-emerald-300 font-semibold">{backfillStatus.alertsInserted}</span> inserted
+                        {backfillStatus.alertsDuplicate > 0 && `, ${backfillStatus.alertsDuplicate} duplicates`}
+                        {backfillStatus.alertsErrored > 0 && `, ${backfillStatus.alertsErrored} errors`}
+                      </p>
+                      {backfillStatus.errorSummary && backfillStatus.errorSummary.length > 0 && (
+                        <p className="mt-2 text-xs text-amber-300">
+                          ⚠ {backfillStatus.errorCount} errors: {backfillStatus.errorSummary.slice(0, 2).join(" | ")}
+                          {backfillStatus.errorSummary.length > 2 && " ..."}
                         </p>
                       )}
                     </>
                   ) : (
-                    <p className="mt-1 text-xs text-slate-400">No recent backfill run</p>
+                    <p className="mt-1 text-xs text-slate-400">No backfill runs yet</p>
                   )}
                 </div>
                 {effectiveUsername && canTriggerBackfill && (
@@ -2580,50 +3198,134 @@ export default function MaintenanceFaultCodesPage() {
                 )}
               </div>
             </article>
+            )}
           </div>
 
           {canEnrollPushOnDevice && (
             <article className="mt-4 rounded-lg border border-sky-500/35 bg-slate-950/60 p-3">
-              <p className="text-xs uppercase tracking-wide text-sky-300">Steps to get registered for notification alerts on your phone</p>
-              <p className="mt-2 text-xs text-slate-300">
-                1) Open this page on your smartphone browser and allow notifications when prompted.
+              <p className="text-xs uppercase tracking-wide text-sky-300">Get Alerts on Your Phone</p>
+              <p className="mt-3 text-xs text-slate-300">
+                Stay informed about vehicle alerts and maintenance issues in real time.
               </p>
-              <p className="mt-1 text-xs text-slate-300">
-                2) Tap "Enable Push on This Phone" to register your device.
-              </p>
-              <p className="mt-1 text-xs text-slate-300">
-                3) Tap a self-test push below and confirm notification receipt + tap-to-open behavior.
-              </p>
-              <p className="mt-1 text-xs text-slate-400">
-                Production policy stays focused on EngineFaultOn critical alerts. Warning/Info buttons are for onboarding demo only.
+              {pushEnrollmentState?.ready && (
+                <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${pushEnrollmentState.isOff ? "border-amber-500/40 bg-amber-500/10 text-amber-100" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"}`}>
+                  <p className="font-semibold">{pushEnrollmentState.label}</p>
+                  <p className="mt-1 text-xs text-inherit/90">{pushEnrollmentState.detail}</p>
+                </div>
+              )}
+              {pushEnrollmentState?.ready && pushEnrollmentState.isOff && (
+                <div className="mt-3 rounded-lg border border-amber-400/35 bg-amber-500/10 px-3 py-3 text-xs text-amber-50">
+                  <p className="font-semibold text-amber-100">Push is off. Let&apos;s fix it.</p>
+                  <p className="mt-1 text-amber-100/90">Detected phone: {pushGuidePlatformLabel(detectedPushGuidePlatform)}</p>
+                  <p className="mt-1 text-amber-100/90">Tap Let&apos;s Fix It, follow each step, then tap I Did The Steps - Check.</p>
+                  {!pushAssistantStarted && (
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        onClick={startPushFixFlow}
+                        disabled={pushLoading || refreshing || loadingData}
+                        className="rounded-md border border-amber-300/60 bg-amber-700/25 px-3 py-2 text-xs font-semibold text-amber-50 hover:bg-amber-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Let&apos;s Fix It
+                      </button>
+                    </div>
+                  )}
+                  {pushAssistantStarted && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {pushGuide.canTryOpenSettings && (
+                      <button
+                        type="button"
+                        onClick={openBrowserNotificationSettings}
+                        disabled={pushLoading || refreshing || loadingData}
+                        className="rounded-md border border-amber-400/50 bg-amber-600/20 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {pushGuideSettingsButtonLabel(detectedPushGuidePlatform)}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void recheckPushAfterSettingsChange()}
+                      disabled={pushLoading || refreshing || loadingData}
+                      className="rounded-md border border-emerald-400/50 bg-emerald-600/20 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-600/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      I Did The Steps - Check
+                    </button>
+                    </div>
+                  )}
+                  {pushAssistantStarted && pushSettingsInlineHelp && pushSettingsInlineHelp.length > 0 && (
+                    <div className="mt-2 rounded-md border border-amber-300/30 bg-amber-950/30 px-3 py-2">
+                      <p className="font-semibold text-amber-100">{pushSettingsInlineTitle ?? "Next steps"}:</p>
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-100/90">
+                        {pushSettingsInlineHelp.map((line, index) => (
+                          <li key={`${line}-${index}`}>{line}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-2 text-amber-100/90">{pushGuide.hint}</p>
+                      {pushGuide.issueHelp.length > 0 && (
+                        <>
+                          <p className="mt-2 font-semibold text-amber-100">If it still does not work:</p>
+                          <ul className="mt-1 list-disc space-y-1 pl-4 text-amber-100/90">
+                            {pushGuide.issueHelp.map((line, index) => (
+                              <li key={`${line}-${index}`}>{line}</li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {pushEnrollmentLoading && (
+                <p className="mt-3 text-xs text-slate-400">Checking push status for this device...</p>
+              )}
+              <p className="mt-2 text-xs text-slate-400">
+                <strong>Setup:</strong> Open this page on your phone, tap the button below, and allow notifications when prompted.
               </p>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => void enablePushAlerts()}
+                  onClick={() => void handlePushEnrollmentAction()}
                   disabled={pushLoading || refreshing || loadingData}
                   className="rounded-md border border-sky-500/45 bg-sky-700/25 px-3 py-2 text-xs font-semibold text-sky-100 hover:bg-sky-700/35 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {pushEnableLoading ? "Enabling Push..." : "Enable Push on This Phone"}
+                  {pushEnableLoading ? "Updating Push..." : pushEnrollmentState?.actionLabel ?? (pushEnrollmentState?.isOff ? "Turn Push Back On" : "Check This Phone")}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void sendSelfTestPush("critical")}
-                  disabled={pushLoading || refreshing || loadingData}
-                  className="rounded-md border border-rose-500/45 bg-rose-700/25 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {pushSelfTestLoading ? "Sending..." : "Send My Critical Test"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void sendSelfTestPush("warning")}
-                  disabled={pushLoading || refreshing || loadingData}
-                  className="rounded-md border border-amber-500/45 bg-amber-700/25 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {pushSelfTestLoading ? "Sending..." : "Send My Pro+ Demo"}
-                </button>
+
+                {canUsePushTestControls && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void sendTestPush()}
+                      disabled={pushLoading || refreshing || loadingData}
+                      className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {pushSendLoading ? "Sending Team Test..." : "Test All Registered Phones"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void sendSelfTestPush("critical")}
+                      disabled={pushLoading || refreshing || loadingData}
+                      className="rounded-md border border-rose-500/45 bg-rose-700/25 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {pushSelfTestLoading ? "Sending..." : "Send My Critical Test"}
+                    </button>
+                  </>
+                )}
               </div>
+
+              {pushMessage && (
+                <div className="mt-3 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">
+                  {pushMessage}
+                </div>
+              )}
+
+              {pushError && (
+                <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {pushError}
+                </div>
+              )}
             </article>
           )}
 
@@ -2814,13 +3516,13 @@ export default function MaintenanceFaultCodesPage() {
             </div>
           )}
 
-          {pushMessage && (
+          {pushMessage && !canEnrollPushOnDevice && (
             <div className="mt-4 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-200">
               {pushMessage}
             </div>
           )}
 
-          {pushError && (
+          {pushError && !canEnrollPushOnDevice && (
             <div className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
               {pushError}
             </div>

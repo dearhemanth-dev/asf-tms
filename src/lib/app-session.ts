@@ -1,4 +1,4 @@
-import { APP_ROLES, type AppRole } from "@/lib/auth";
+import { normalizeAppRole, type AppRole } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase-server";
 
 export type AppSessionUser = {
@@ -26,11 +26,7 @@ function isDemoSessionMode(): boolean {
 
 function getRoleFromCookie(cookieHeader: string): AppRole {
   const role = readCookie(cookieHeader, "asf_role");
-  if (APP_ROLES.includes(role as AppRole)) {
-    return role as AppRole;
-  }
-
-  return "maintenance";
+  return normalizeAppRole(role, "maintenance");
 }
 
 function toDisplayName(username: string): string {
@@ -83,7 +79,7 @@ export async function getAppSessionUser(request: Request): Promise<AppSessionUse
     id: data.id,
     username: data.UserName,
     fullName: data.full_name ?? data.UserName,
-    role: data.UserType as AppRole,
+    role: normalizeAppRole(data.UserType, "maintenance"),
     tenantId,
   };
 }

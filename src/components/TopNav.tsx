@@ -35,6 +35,14 @@ export default function TopNav({
     !String(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY).startsWith("your_");
 
   const menuLinks = useMemo(() => {
+    if (role === "admin") {
+      return [
+        { href: "/admin", label: "Admin" },
+        { href: "/fleet", label: "Fleet" },
+        { href: "/reports/vehicle-ranking", label: "Vehicle Ranking" },
+      ];
+    }
+
     if (role === "management") {
       return [
         { href: "/reports/vehicle-ranking", label: "Vehicle Ranking" },

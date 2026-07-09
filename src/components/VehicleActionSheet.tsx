@@ -25,6 +25,7 @@ type VehicleActionSheetProps = {
 };
 
 const ACTIONS_BY_ROLE: Record<AppRole, Array<string>> = {
+  admin: ["Open Admin Console", "Manage Users", "Review Alert Routing"],
   management: ["Contact Driver", "Reassign Route", "Open Incident"],
   accounts: ["View Cost Ledger", "Attach Invoice", "Hold Payment"],
   maintenance: ["View Faults", "Open Work Order", "Check MPG"],

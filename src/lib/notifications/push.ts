@@ -220,49 +220,76 @@ export async function sendPushToTenant(options: SendPushOptions, payload: PushPa
 
   const rows = [...uniqueRows.values()];
   const errors: string[] = [...lookupErrors];
-  let sent = 0;
-  let removed = 0;
+  const deliveryResults = await Promise.all(
+    rows.map(async (row) => {
+      try {
+        await webpush.sendNotification(
+          toWebPushSubscription(row),
+          JSON.stringify({
+            title: payload.title,
+            body: payload.body,
+            url: buildPushTargetUrl(payload.url, row.username ?? options.username),
+            ...(payload.tag?.trim() ? { tag: payload.tag.trim() } : {}),
+          }),
+          {
+            TTL: 60,
+            urgency: "high",
+          }
+        );
 
-  for (const row of rows) {
-    try {
-      await webpush.sendNotification(
-        toWebPushSubscription(row),
-        JSON.stringify({
-          title: payload.title,
-          body: payload.body,
-          url: buildPushTargetUrl(payload.url, row.username ?? options.username),
-          ...(payload.tag?.trim() ? { tag: payload.tag.trim() } : {}),
-        }),
-        {
-          TTL: 60,
-          urgency: "high",
+        return { sent: 1, removed: 0, error: null as string | null };
+      } catch (error) {
+        const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number((error as { statusCode?: number }).statusCode) : 0;
+        const errorBody =
+          typeof error === "object" && error !== null && "body" in error
+            ? (error as { body?: unknown }).body
+            : undefined;
+        const errorBodyText =
+          typeof errorBody === "string"
+            ? errorBody
+            : errorBody && typeof errorBody === "object"
+              ? JSON.stringify(errorBody)
+              : "";
+        const baseMessage = error instanceof Error ? error.message : "Unknown push delivery failure";
+        const message = [
+          baseMessage,
+          statusCode > 0 ? `status=${statusCode}` : "",
+          errorBodyText ? `provider=${errorBodyText.slice(0, 220)}` : "",
+        ]
+          .filter(Boolean)
+          .join(" | ");
+
+        console.error(
+          "[push-send-error] Endpoint:",
+          row.endpoint.substring(0, 50),
+          "Status:",
+          statusCode,
+          "Message:",
+          message
+        );
+
+        let removed = 0;
+        if (statusCode === 404 || statusCode === 410) {
+          const { error: deleteError } = await supabase
+            .from("maintenance_push_subscriptions")
+            .delete()
+            .eq("endpoint", row.endpoint);
+
+          if (!deleteError) {
+            removed = 1;
+          }
         }
-      );
-      sent += 1;
-    } catch (error) {
-      const statusCode = typeof error === "object" && error !== null && "statusCode" in error ? Number((error as { statusCode?: number }).statusCode) : 0;
-      const message = error instanceof Error ? error.message : "Unknown push delivery failure";
-      errors.push(message);
 
-      console.error(
-        "[push-send-error] Endpoint:",
-        row.endpoint.substring(0, 50),
-        "Status:",
-        statusCode,
-        "Message:",
-        message
-      );
-
-      if (statusCode === 404 || statusCode === 410) {
-        const { error: deleteError } = await supabase
-          .from("maintenance_push_subscriptions")
-          .delete()
-          .eq("endpoint", row.endpoint);
-
-        if (!deleteError) {
-          removed += 1;
-        }
+        return { sent: 0, removed, error: message };
       }
+    })
+  );
+
+  const sent = deliveryResults.reduce((sum, result) => sum + result.sent, 0);
+  const removed = deliveryResults.reduce((sum, result) => sum + result.removed, 0);
+  for (const result of deliveryResults) {
+    if (result.error) {
+      errors.push(result.error);
     }
   }
 
