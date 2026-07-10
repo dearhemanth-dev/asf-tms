@@ -371,6 +371,7 @@ function tierStyles(tier: DriverScoreRow["tier"]) {
 export default function DriverRankingPage() {
   const router = useRouter();
   const [session, setSession] = useState<SessionState>({ ready: false, role: null, username: null });
+  const canAccessDriverReport = session.role === "management" || session.role === "maintenance";
   const isHkManager = session.username === "hkmanager";
   const [windowDays, setWindowDays] = useState<TimeWindow>("30");
   const [infoOpen, setInfoOpen] = useState(false);
@@ -405,13 +406,13 @@ export default function DriverRankingPage() {
   }, []);
 
   useEffect(() => {
-    if (session.ready && session.role !== "management") {
+    if (session.ready && !canAccessDriverReport) {
       router.replace("/fleet");
     }
-  }, [router, session.ready, session.role]);
+  }, [canAccessDriverReport, router, session.ready]);
 
   useEffect(() => {
-    if (!session.ready || session.role !== "management") {
+    if (!session.ready || !canAccessDriverReport) {
       return;
     }
 
@@ -455,7 +456,7 @@ export default function DriverRankingPage() {
     }
 
     void loadData();
-  }, [session.ready, session.role]);
+  }, [canAccessDriverReport, session.ready]);
 
   // Fetch aggregated analytics data
   useEffect(() => {
@@ -605,8 +606,8 @@ export default function DriverRankingPage() {
     return <main className="min-h-screen grid place-items-center text-slate-300">Loading Driver Ranking...</main>;
   }
 
-  if (session.role !== "management") {
-    return <main className="min-h-screen grid place-items-center text-rose-300">Management access only.</main>;
+  if (!canAccessDriverReport) {
+    return <main className="min-h-screen grid place-items-center text-rose-300">Management or maintenance access only.</main>;
   }
 
   return (

@@ -47,7 +47,7 @@ export default function LoginPage() {
 
   function getNextRoute(role: AppRole | "driver") {
     if (role === "admin") return "/admin";
-    return role === "maintenance" ? "/maintenance/fault-codes" : "/fleet";
+    return "/fleet";
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {

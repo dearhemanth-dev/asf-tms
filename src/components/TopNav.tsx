@@ -45,10 +45,11 @@ export default function TopNav({
 
     if (role === "management") {
       return [
-        { href: "/reports/vehicle-ranking", label: "Vehicle Ranking" },
-        { href: "/reports/driver-ranking", label: "Driver Ranking" },
-        { href: "/reports/repairs", label: "Repairs Report" },
+        { href: "/maintenance/fault-codes", label: "Fleet Health Monitor" },
         { href: "/fuel-expenses/report", label: "Fuel Report" },
+        { href: "/reports/repairs", label: "Repairs Report" },
+        { href: "/reports/driver-ranking", label: "Driver Ranking" },
+        { href: "/reports/vehicle-ranking", label: "Vehicle Ranking" },
       ];
     }
 
@@ -60,7 +61,10 @@ export default function TopNav({
     }
 
     if (role === "maintenance") {
-      return [{ href: "/maintenance/fault-codes", label: "Fault Codes" }];
+      return [
+        { href: "/maintenance/fault-codes", label: "Fleet Health Monitor" },
+        { href: "/reports/driver-ranking", label: "Drivers Report" },
+      ];
     }
 
     if (role === "dispatch") {

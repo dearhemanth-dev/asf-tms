@@ -12,6 +12,7 @@ const GROUPS: MenuGroup[] = [
   { title: "Driver", items: ["Driver"] },
   { title: "Location", items: ["Location"] },
   { title: "Faults", items: ["Faults"] },
+  { title: "Drivers Report", items: ["Drivers Report"] },
   { title: "Work Orders", items: ["Work Orders"] },
 ];
 

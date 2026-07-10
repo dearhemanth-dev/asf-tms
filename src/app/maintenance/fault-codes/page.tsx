@@ -1459,7 +1459,7 @@ export default function MaintenanceFaultCodesPage() {
   const canUsePushTestControls = effectiveUsername === "hkmaintenance"; // Dev-only: testing controls
   const canUseWebhookControls = effectiveUsername === "hkmaintenance"; // Dev-only: webhook config
   const canTriggerBackfill = effectiveUsername === "hkmaintenance";   // Dev-only: manual backfill
-  const canEnrollPushOnDevice = Boolean(effectiveUsername) && effectiveRole === "maintenance";
+  const canEnrollPushOnDevice = Boolean(effectiveUsername) && (effectiveRole === "maintenance" || effectiveRole === "management");
   const detectedPushGuidePlatform = useMemo<PushGuidePlatform>(() => {
     if (typeof navigator === "undefined") return "android";
     return inferPushGuidePlatform(navigator.userAgent);
@@ -1762,7 +1762,7 @@ export default function MaintenanceFaultCodesPage() {
   useEffect(() => {
     if (loadingProfile) return;
 
-    if (effectiveRole !== "maintenance") {
+    if (effectiveRole !== "maintenance" && effectiveRole !== "management") {
       router.replace("/fleet");
     }
   }, [effectiveRole, loadingProfile, router]);
@@ -2593,7 +2593,7 @@ export default function MaintenanceFaultCodesPage() {
   }
 
   useEffect(() => {
-    if (loadingProfile || effectiveRole !== "maintenance") return;
+    if (loadingProfile || (effectiveRole !== "maintenance" && effectiveRole !== "management")) return;
     void loadFaultCodes(false);
   }, [loadingProfile, effectiveRole]);
 
@@ -3048,7 +3048,7 @@ export default function MaintenanceFaultCodesPage() {
     return <main className="min-h-screen grid place-items-center text-slate-300">Loading maintenance workspace...</main>;
   }
 
-  if (effectiveRole !== "maintenance") {
+  if (effectiveRole !== "maintenance" && effectiveRole !== "management") {
     return <main className="min-h-screen grid place-items-center text-slate-300">Redirecting...</main>;
   }
 

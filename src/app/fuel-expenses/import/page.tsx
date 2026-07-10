@@ -13,6 +13,57 @@ type ParseResult = {
   columns: string[];
 };
 
+type ConflictItem = {
+  conflictKey: string;
+  kind: "transaction_number_conflict";
+  incoming: {
+    uploadIndex: number;
+    transaction_number: string | null;
+    transaction_date: string | null;
+    transaction_time: string | null;
+    truck_stop_name: string | null;
+    truck_stop_city: string | null;
+    truck_stop_state: string | null;
+    truck_stop_invoice_number: string | null;
+    driver_name: string | null;
+    unit_number: string | null;
+    diesel_gallons: string | number | null;
+    diesel_price_per_gallon: string | number | null;
+    diesel_cost: string | number | null;
+    total_amount_due_comdata: string | number | null;
+  };
+  existing: {
+    id: string;
+    transaction_number: string | null;
+    transaction_date: string | null;
+    transaction_time: string | null;
+    truck_stop_name: string | null;
+    truck_stop_city: string | null;
+    truck_stop_state: string | null;
+    truck_stop_invoice_number: string | null;
+    driver_name: string | null;
+    unit_number: string | null;
+    diesel_gallons: string | number | null;
+    diesel_price_per_gallon: string | number | null;
+    diesel_cost: string | number | null;
+    total_amount_due_comdata: string | number | null;
+  };
+};
+
+type ValidateResponse = {
+  action: "validate";
+  totalRows: number;
+  importableCount: number;
+  exactDuplicates: Array<{
+    uploadIndex: number;
+    transaction_number: string | null;
+    transaction_date: string | null;
+    truck_stop_invoice_number: string | null;
+  }>;
+  conflicts: ConflictItem[];
+  requiresReview: boolean;
+};
+
 type MissingDatesReport = {
   startDate: string;
   endDate: string;
@@ -44,13 +95,24 @@ function displayCell(value: unknown): string {
   return String(value);
 }
 
+function formatLocation(city: string | null, state: string | null, name: string | null): string {
+  const cityState = [city, state].filter(Boolean).join(", ");
+  if (name && cityState) return `${name} (${cityState})`;
+  return name || cityState || "—";
+}
+
 export default function FuelExpensesImportPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [session, setSession] = useState<{ ready: boolean; role: AppRole | null }>({
-    ready: false,
-    role: null,
+  const [session] = useState<{ ready: boolean; role: AppRole | null }>(() => {
+    if (typeof window === "undefined") {
+      return { ready: false, role: null };
+    }
+
+    const sessionRole = window.sessionStorage.getItem("demoRole");
+    const normalizedRole = APP_ROLES.includes(sessionRole as AppRole) ? (sessionRole as AppRole) : null;
+    return { ready: true, role: normalizedRole };
   });
   const [file, setFile] = useState<File | null>(null);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
@@ -59,13 +121,21 @@ export default function FuelExpensesImportPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [missingDatesState, setMissingDatesState] = useState<MissingDatesState>("idle");
   const [missingDatesReport, setMissingDatesReport] = useState<MissingDatesReport | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const sessionRole = window.sessionStorage.getItem("demoRole");
-    const normalizedRole = APP_ROLES.includes(sessionRole as AppRole) ? (sessionRole as AppRole) : null;
-    setSession({ ready: true, role: normalizedRole });
-  }, []);
+  const [conflicts, setConflicts] = useState<ConflictItem[]>([]);
+  const [exactDuplicateCount, setExactDuplicateCount] = useState(0);
+  const [showConflictModal, setShowConflictModal] = useState(false);
+  const [decisionByConflictKey, setDecisionByConflictKey] = useState<Record<string, "keep_both" | "skip">>({});
+  const [pendingConflictDecision, setPendingConflictDecision] = useState<{ conflictKey: string; decision: "keep_both" | "skip" } | null>(null);
+  const [showDecisionConfirmModal, setShowDecisionConfirmModal] = useState(false);
+  const [ackReviewedConflicts, setAckReviewedConflicts] = useState(false);
+  const [ackUnderstandImpact, setAckUnderstandImpact] = useState(false);
+  const [insertedSummary, setInsertedSummary] = useState<{ inserted: number; skippedConflicts: number; skippedExactDuplicates: number } | null>(null);
+  const decidedCount = Object.keys(decisionByConflictKey).length;
+  const unresolvedCount = Math.max(0, conflicts.length - decidedCount);
+  const selectedKeepBothCount = Object.values(decisionByConflictKey).filter((value) => value === "keep_both").length;
+  const selectedSkipCount = Object.values(decisionByConflictKey).filter((value) => value === "skip").length;
+  const nonConflictInsertableCount = Math.max(0, (parseResult?.rows.length ?? 0) - exactDuplicateCount - conflicts.length);
+  const projectedInsertCount = nonConflictInsertableCount + selectedKeepBothCount;
 
   useEffect(() => {
     if (session.ready && session.role !== "management" && session.role !== "accounts") {
@@ -80,6 +150,15 @@ export default function FuelExpensesImportPage() {
     setImportState("idle");
     setErrorMessage(null);
     setImportedCount(0);
+    setConflicts([]);
+    setExactDuplicateCount(0);
+    setShowConflictModal(false);
+    setDecisionByConflictKey({});
+    setPendingConflictDecision(null);
+    setShowDecisionConfirmModal(false);
+    setAckReviewedConflicts(false);
+    setAckUnderstandImpact(false);
+    setInsertedSummary(null);
   }
 
   async function handleCheckMissingDates() {
@@ -133,6 +212,15 @@ export default function FuelExpensesImportPage() {
 
       setParseResult(payload);
       setMissingDatesReport(null);
+      setConflicts([]);
+      setExactDuplicateCount(0);
+      setShowConflictModal(false);
+      setDecisionByConflictKey({});
+      setPendingConflictDecision(null);
+      setShowDecisionConfirmModal(false);
+      setAckReviewedConflicts(false);
+      setAckUnderstandImpact(false);
+      setInsertedSummary(null);
       setImportState("previewing");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Network error while reading file.");
@@ -146,26 +234,166 @@ export default function FuelExpensesImportPage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/fuel-expenses", {
+      const validateResponse = await fetch("/api/fuel-expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: parseResult.rows }),
+        body: JSON.stringify({ rows: parseResult.rows, action: "validate" }),
       });
 
-      const payload = (await response.json()) as { inserted?: number; error?: string };
+      const validatePayload = (await validateResponse.json()) as ValidateResponse & { error?: string };
 
-      if (!response.ok) {
+      if (!validateResponse.ok) {
+        setErrorMessage(validatePayload.error ?? "Unable to validate import.");
+        setImportState("error");
+        return;
+      }
+
+      setExactDuplicateCount(validatePayload.exactDuplicates.length);
+
+      if (validatePayload.requiresReview && validatePayload.conflicts.length > 0) {
+        setConflicts(validatePayload.conflicts);
+        setDecisionByConflictKey({});
+        setPendingConflictDecision(null);
+        setShowDecisionConfirmModal(false);
+        setAckReviewedConflicts(false);
+        setAckUnderstandImpact(false);
+        setShowConflictModal(true);
+        setImportState("previewing");
+        return;
+      }
+
+      const commitResponse = await fetch("/api/fuel-expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: parseResult.rows, action: "commit" }),
+      });
+
+      const payload = (await commitResponse.json()) as {
+        inserted?: number;
+        skippedConflicts?: number;
+        skippedExactDuplicates?: number;
+        error?: string;
+      };
+
+      if (!commitResponse.ok) {
         setErrorMessage(payload.error ?? "Import failed.");
         setImportState("error");
         return;
       }
 
       setImportedCount(payload.inserted ?? 0);
+      setInsertedSummary({
+        inserted: payload.inserted ?? 0,
+        skippedConflicts: payload.skippedConflicts ?? 0,
+        skippedExactDuplicates: payload.skippedExactDuplicates ?? 0,
+      });
       setImportState("done");
     } catch {
       setErrorMessage("Network error during import.");
       setImportState("error");
     }
+  }
+
+  function openDecisionConfirmation(conflictKey: string, decision: "keep_both" | "skip") {
+    if (!ackReviewedConflicts || !ackUnderstandImpact || importState === "importing") return;
+    setPendingConflictDecision({ conflictKey, decision });
+    setShowDecisionConfirmModal(true);
+  }
+
+  function confirmConflictDecision() {
+    if (!pendingConflictDecision) return;
+    const nextDecisionMap = {
+      ...decisionByConflictKey,
+      [pendingConflictDecision.conflictKey]: pendingConflictDecision.decision,
+    };
+
+    setDecisionByConflictKey(nextDecisionMap);
+    setShowDecisionConfirmModal(false);
+    setPendingConflictDecision(null);
+
+    // If this was the last unresolved conflict and acknowledgements are done,
+    // auto-commit so the user doesn't get stuck in the modal flow.
+    if (ackReviewedConflicts && ackUnderstandImpact && Object.keys(nextDecisionMap).length === conflicts.length) {
+      void submitCommitWithDecisions(nextDecisionMap);
+    }
+  }
+
+  async function submitCommitWithDecisions(decisionMap: Record<string, "keep_both" | "skip">) {
+    if (!parseResult || parseResult.rows.length === 0) return;
+
+    const unresolved = conflicts.filter((conflict) => !decisionMap[conflict.conflictKey]).length;
+    if (unresolved > 0) {
+      setErrorMessage(`Please select and confirm a decision for all conflicts. Remaining: ${unresolved}.`);
+      return;
+    }
+
+    setImportState("importing");
+    setErrorMessage(null);
+
+    try {
+      const conflictDecisions = conflicts.map((conflict) => ({
+        conflictKey: conflict.conflictKey,
+        decision: decisionMap[conflict.conflictKey],
+      }));
+
+      const response = await fetch("/api/fuel-expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: parseResult.rows,
+          action: "commit",
+          conflictDecisions,
+          acknowledgements: {
+            reviewedConflicts: ackReviewedConflicts,
+            understandImpact: ackUnderstandImpact,
+          },
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        inserted?: number;
+        skippedConflicts?: number;
+        skippedExactDuplicates?: number;
+        conflicts?: ConflictItem[];
+        requiresReview?: boolean;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        if (payload.requiresReview && Array.isArray(payload.conflicts)) {
+          setConflicts(payload.conflicts);
+          setShowConflictModal(true);
+          setDecisionByConflictKey({});
+          setShowDecisionConfirmModal(false);
+          setPendingConflictDecision(null);
+          setImportState("previewing");
+          setErrorMessage(payload.error ?? "Conflict decisions are required before import.");
+          return;
+        }
+
+        setErrorMessage(payload.error ?? "Import failed.");
+        setImportState("error");
+        return;
+      }
+
+      setImportedCount(payload.inserted ?? 0);
+      setInsertedSummary({
+        inserted: payload.inserted ?? 0,
+        skippedConflicts: payload.skippedConflicts ?? 0,
+        skippedExactDuplicates: payload.skippedExactDuplicates ?? 0,
+      });
+      setShowDecisionConfirmModal(false);
+      setPendingConflictDecision(null);
+      setShowConflictModal(false);
+      setImportState("done");
+    } catch {
+      setErrorMessage("Network error during import.");
+      setImportState("error");
+    }
+  }
+
+  async function handleCommitWithDecisions() {
+    await submitCommitWithDecisions(decisionByConflictKey);
   }
 
   function handleReset() {
@@ -174,6 +402,15 @@ export default function FuelExpensesImportPage() {
     setImportState("idle");
     setErrorMessage(null);
     setImportedCount(0);
+    setConflicts([]);
+    setExactDuplicateCount(0);
+    setShowConflictModal(false);
+    setDecisionByConflictKey({});
+    setPendingConflictDecision(null);
+    setShowDecisionConfirmModal(false);
+    setAckReviewedConflicts(false);
+    setAckUnderstandImpact(false);
+    setInsertedSummary(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -319,6 +556,11 @@ export default function FuelExpensesImportPage() {
             <p className="text-base font-semibold text-emerald-100">
               Import complete — {importedCount} rows inserted into fuel_expenses.
             </p>
+            {insertedSummary && (
+              <p className="mt-2 text-xs text-emerald-100/90">
+                Skipped conflicts: {insertedSummary.skippedConflicts} | Skipped exact duplicates: {insertedSummary.skippedExactDuplicates}
+              </p>
+            )}
             <div className="mt-3 flex gap-2">
               <button
                 onClick={handleReset}
@@ -349,6 +591,16 @@ export default function FuelExpensesImportPage() {
                       <> &nbsp;<span className="text-amber-300">{parseResult.skipped} blank rows skipped.</span></>
                     )}
                   </p>
+                  {exactDuplicateCount > 0 && (
+                    <p className="mt-1 text-xs text-amber-200">
+                      {exactDuplicateCount} exact duplicate rows will be skipped automatically.
+                    </p>
+                  )}
+                  {conflicts.length > 0 && (
+                    <p className="mt-1 text-xs text-cyan-200">
+                      {conflicts.length} transaction conflicts need your decision before commit.
+                    </p>
+                  )}
                   <p className="mt-1 text-xs text-slate-400">
                     Columns detected: {parseResult.columns.length}
                   </p>
@@ -368,7 +620,9 @@ export default function FuelExpensesImportPage() {
                   >
                     {importState === "importing"
                       ? "Importing..."
-                      : `Import ${parseResult.totalParsed} rows`}
+                      : conflicts.length > 0
+                        ? "Review conflicts"
+                        : `Import ${parseResult.totalParsed} rows`}
                   </button>
                 </div>
               </div>
@@ -411,6 +665,177 @@ export default function FuelExpensesImportPage() {
               </div>
             </section>
           </>
+        )}
+
+        {showConflictModal && conflicts.length > 0 && (
+          <section className="fixed inset-0 z-50 bg-slate-950/80 px-3 py-4 sm:px-6">
+            <div className="mx-auto h-full w-full max-w-6xl overflow-y-auto rounded-2xl border border-cyan-400/30 bg-slate-950/95 p-4 shadow-2xl">
+              <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-cyan-100">Conflict Review Required</h2>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Review each conflicting transaction and choose whether to keep both records or skip incoming.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowConflictModal(false)}
+                  className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-xs text-slate-100 hover:bg-white/10"
+                >
+                  Close (does not import)
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {conflicts.map((conflict) => {
+                  const selectedDecision = decisionByConflictKey[conflict.conflictKey] ?? null;
+                  return (
+                    <article key={conflict.conflictKey} className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-slate-100">
+                          Transaction #{displayCell(conflict.incoming.transaction_number)}
+                        </p>
+                        {selectedDecision ? (
+                          <span className={selectedDecision === "keep_both" ? "rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-200" : "rounded-full border border-rose-400/40 bg-rose-400/10 px-2 py-0.5 text-[11px] font-semibold text-rose-200"}>
+                            {selectedDecision === "keep_both" ? "Decision: Keep both" : "Decision: Skip incoming"}
+                          </span>
+                        ) : (
+                          <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
+                            Decision pending
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div className="rounded-lg border border-cyan-500/25 bg-cyan-500/10 p-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-200">Incoming (Upload)</p>
+                          <p className="mt-1 text-xs text-slate-200">Date/Time: {displayCell(conflict.incoming.transaction_date)} {displayCell(conflict.incoming.transaction_time)}</p>
+                          <p className="text-xs text-slate-200">Location: {formatLocation(conflict.incoming.truck_stop_city, conflict.incoming.truck_stop_state, conflict.incoming.truck_stop_name)}</p>
+                          <p className="text-xs text-slate-200">Driver: {displayCell(conflict.incoming.driver_name)} | Unit: {displayCell(conflict.incoming.unit_number)}</p>
+                          <p className="text-xs text-slate-200">Invoice: {displayCell(conflict.incoming.truck_stop_invoice_number)}</p>
+                          <p className="text-xs text-slate-200">Diesel: {displayCell(conflict.incoming.diesel_gallons)} gal @ ${displayCell(conflict.incoming.diesel_price_per_gallon)}</p>
+                          <p className="text-xs text-slate-200">Diesel Cost: ${displayCell(conflict.incoming.diesel_cost)} | Total: ${displayCell(conflict.incoming.total_amount_due_comdata)}</p>
+                        </div>
+
+                        <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-200">Existing (Database)</p>
+                          <p className="mt-1 text-xs text-slate-200">Date/Time: {displayCell(conflict.existing.transaction_date)} {displayCell(conflict.existing.transaction_time)}</p>
+                          <p className="text-xs text-slate-200">Location: {formatLocation(conflict.existing.truck_stop_city, conflict.existing.truck_stop_state, conflict.existing.truck_stop_name)}</p>
+                          <p className="text-xs text-slate-200">Driver: {displayCell(conflict.existing.driver_name)} | Unit: {displayCell(conflict.existing.unit_number)}</p>
+                          <p className="text-xs text-slate-200">Invoice: {displayCell(conflict.existing.truck_stop_invoice_number)}</p>
+                          <p className="text-xs text-slate-200">Diesel: {displayCell(conflict.existing.diesel_gallons)} gal @ ${displayCell(conflict.existing.diesel_price_per_gallon)}</p>
+                          <p className="text-xs text-slate-200">Diesel Cost: ${displayCell(conflict.existing.diesel_cost)} | Total: ${displayCell(conflict.existing.total_amount_due_comdata)}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap justify-end gap-2">
+                        <button
+                          onClick={() => openDecisionConfirmation(conflict.conflictKey, "skip")}
+                          disabled={!ackReviewedConflicts || !ackUnderstandImpact || importState === "importing"}
+                          className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-1.5 text-xs font-semibold text-rose-100 hover:bg-rose-400/20 disabled:opacity-50"
+                        >
+                          Skip incoming
+                        </button>
+                        <button
+                          onClick={() => openDecisionConfirmation(conflict.conflictKey, "keep_both")}
+                          disabled={!ackReviewedConflicts || !ackUnderstandImpact || importState === "importing"}
+                          className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50"
+                        >
+                          Keep both
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-white/10 bg-slate-900/75 p-3">
+                <label className="flex items-center gap-2 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={ackReviewedConflicts}
+                    onChange={(event) => setAckReviewedConflicts(event.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  I reviewed all conflicts shown above.
+                </label>
+                <label className="mt-2 flex items-center gap-2 text-xs text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={ackUnderstandImpact}
+                    onChange={(event) => setAckUnderstandImpact(event.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  I understand these decisions affect expenses and reporting totals.
+                </label>
+                <p className="mt-3 text-xs text-slate-300">
+                  Decisions confirmed: {decidedCount} / {conflicts.length} | Pending: {unresolvedCount}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Selected keep both: {selectedKeepBothCount} | Selected skip incoming: {selectedSkipCount}
+                </p>
+                <p className="mt-1 text-xs text-cyan-200">
+                  Projected inserts after selections: {projectedInsertCount} (exact duplicates auto-skipped: {exactDuplicateCount})
+                </p>
+              </div>
+
+              <div className="sticky bottom-0 mt-4 flex flex-wrap justify-end gap-2 border-t border-white/10 bg-slate-950/95 pt-3">
+                <button
+                  onClick={() => setShowConflictModal(false)}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-white/10"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleCommitWithDecisions()}
+                  disabled={!ackReviewedConflicts || !ackUnderstandImpact || unresolvedCount > 0 || importState === "importing"}
+                  className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-50"
+                >
+                  {importState === "importing" ? "Committing..." : "Commit selected decisions and import"}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {showDecisionConfirmModal && pendingConflictDecision && (
+          <section className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/85 px-3 py-4 sm:px-6">
+            <div className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-950 p-4 shadow-2xl">
+              <h3 className="text-base font-semibold text-white">
+                Confirm conflict decision
+              </h3>
+              <p className="mt-2 text-sm text-slate-300">
+                {pendingConflictDecision.decision === "keep_both"
+                  ? "Set this conflict to KEEP BOTH?"
+                  : "Set this conflict to SKIP INCOMING?"}
+              </p>
+              <p className="mt-2 text-xs text-slate-300">
+                This applies only to transaction #{displayCell(conflicts.find((c) => c.conflictKey === pendingConflictDecision.conflictKey)?.incoming.transaction_number)}.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                You can still change this decision before final commit.
+              </p>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowDecisionConfirmModal(false);
+                    setPendingConflictDecision(null);
+                  }}
+                  disabled={importState === "importing"}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-100 hover:bg-white/10 disabled:opacity-50"
+                >
+                  No, go back
+                </button>
+                <button
+                  onClick={confirmConflictDecision}
+                  disabled={importState === "importing"}
+                  className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                >
+                  Yes, confirm decision
+                </button>
+              </div>
+            </div>
+          </section>
         )}
       </div>
     </main>
