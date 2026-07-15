@@ -63,6 +63,7 @@ export default function TopNav({
     if (role === "maintenance") {
       return [
         { href: "/maintenance/fault-codes", label: "Fleet Health Monitor" },
+        { href: "/maintenance/fault-intelligence", label: "Fault Intelligence" },
         { href: "/reports/driver-ranking", label: "Drivers Report" },
       ];
     }

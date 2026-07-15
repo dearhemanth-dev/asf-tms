@@ -498,13 +498,19 @@ function toText(value: unknown): string {
 
 function findVin(rawVehicle: Record<string, unknown>): string | null {
   const candidates: unknown[] = [
+    rawVehicle.resolvedVin,
     rawVehicle.vin,
     rawVehicle.VIN,
     rawVehicle.vehicleVin,
     rawVehicle.vehicle_vin,
     asRecord(rawVehicle.vehicle)?.vin,
+    asRecord(rawVehicle.vehicle)?.VIN,
     asRecord(rawVehicle.asset)?.vin,
+    asRecord(rawVehicle.asset)?.VIN,
     asRecord(rawVehicle.meta)?.vin,
+    asRecord(rawVehicle.meta)?.VIN,
+    asRecord(rawVehicle.stats)?.vin,
+    asRecord(rawVehicle.stats)?.VIN,
   ];
 
   for (const candidate of candidates) {
@@ -778,6 +784,69 @@ function buildAssetVehicleProfile(asset: AssetVehicleMeta | null, fallbackProfil
     .trim();
 
   return profile.length > 0 ? profile : fallbackProfile;
+}
+
+function normalizeAssetLookupToken(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function compressAssetLookupToken(value: string): string {
+  return normalizeAssetLookupToken(value).replace(/[^a-z0-9]/g, "");
+}
+
+function deriveAssetLookupTokens(values: Array<string | null | undefined>): string[] {
+  const tokens = new Set<string>();
+
+  for (const raw of values) {
+    const value = (raw ?? "").trim();
+    if (!value) continue;
+
+    const normalized = normalizeAssetLookupToken(value);
+    if (normalized) tokens.add(normalized);
+
+    const compressed = compressAssetLookupToken(value);
+    if (compressed) tokens.add(compressed);
+
+    const numericParts = normalized.match(/\d{2,}/g) ?? [];
+    for (const part of numericParts) {
+      tokens.add(part);
+    }
+  }
+
+  return Array.from(tokens);
+}
+
+function resolveAssetMetaForVehicle(
+  vehicle: VehicleFaultView,
+  assetVehicleMeta: Record<string, AssetVehicleMeta>,
+  rawVin: string | null
+): AssetVehicleMeta | null {
+  if (rawVin) {
+    const vinMatched = assetVehicleMeta[`vin:${rawVin}`];
+    if (vinMatched) return vinMatched;
+  }
+
+  const vehicleRecord = asRecord(vehicle.rawVehicle.vehicle);
+  const assetRecord = asRecord(vehicle.rawVehicle.asset);
+
+  const candidateTokens = deriveAssetLookupTokens([
+    vehicle.vehicleLabel,
+    vehicle.vehicleKey,
+    toText(vehicle.rawVehicle.vehicleName),
+    toText(vehicle.rawVehicle.name),
+    toText(vehicleRecord?.name),
+    toText(vehicleRecord?.id),
+    toText(vehicleRecord?.number),
+    toText(assetRecord?.asset_no),
+    toText(assetRecord?.asset_unit_number),
+  ]);
+
+  for (const token of candidateTokens) {
+    const matched = assetVehicleMeta[`asset:${token}`];
+    if (matched) return matched;
+  }
+
+  return null;
 }
 
 function getNumericStat(value: unknown, depth = 0): number | null {
@@ -2606,7 +2675,7 @@ export default function MaintenanceFaultCodesPage() {
   }, [pushEnrollmentState?.isOff]);
 
   useEffect(() => {
-    if (loadingProfile || effectiveRole !== "maintenance") return;
+    if (loadingProfile || (effectiveRole !== "maintenance" && effectiveRole !== "management")) return;
 
     let cancelled = false;
 
@@ -2726,12 +2795,13 @@ export default function MaintenanceFaultCodesPage() {
 
         const nextMeta: Record<string, AssetVehicleMeta> = {};
         for (const asset of payload.assets) {
-          const assetNo = asset.asset_no.trim().toLowerCase();
-          const assetUnitNumber = asset.asset_unit_number.trim().toLowerCase();
+          const assetNo = asset.asset_no.trim();
+          const assetUnitNumber = asset.asset_unit_number.trim();
           const vin = (asset.vin ?? "").trim().toUpperCase();
 
-          if (assetNo) nextMeta[`asset:${assetNo}`] = asset;
-          if (assetUnitNumber) nextMeta[`asset:${assetUnitNumber}`] = asset;
+          for (const token of deriveAssetLookupTokens([assetNo, assetUnitNumber])) {
+            nextMeta[`asset:${token}`] = asset;
+          }
           if (vin) nextMeta[`vin:${vin}`] = asset;
         }
 
@@ -3543,12 +3613,10 @@ export default function MaintenanceFaultCodesPage() {
                 const pilotCards = buildRepairAlertCards(vehicle.faults, { maxCards: 6 });
                 const isExpanded = expandedVehicleKey === vehicle.vehicleKey;
                 const hasFaults = vehicle.faultCount > 0;
-                const resolvedVin = findVin(vehicle.rawVehicle) ?? "VIN unavailable";
-                const matchedAsset =
-                  assetVehicleMeta[`vin:${resolvedVin}`] ??
-                  assetVehicleMeta[`asset:${vehicle.vehicleLabel.trim().toLowerCase()}`] ??
-                  assetVehicleMeta[`asset:${vehicle.vehicleKey.trim().toLowerCase()}`] ??
-                  null;
+                const rawVin = findVin(vehicle.rawVehicle);
+                const matchedAsset = resolveAssetMetaForVehicle(vehicle, assetVehicleMeta, rawVin);
+                const assetVin = matchedAsset?.vin ? matchedAsset.vin.trim().toUpperCase() : "";
+                const resolvedVin = rawVin || assetVin || "VIN unavailable";
                 const resolvedVehicleProfile = buildAssetVehicleProfile(
                   matchedAsset,
                   extractVehicleProfile(vehicle.rawVehicle, vehicle.vehicleLabel)
@@ -3914,7 +3982,7 @@ export default function MaintenanceFaultCodesPage() {
           )}
 
           {healthModalVehicle && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4" role="dialog" aria-modal="true">
+            <div className="fixed inset-0 z-[1600] flex items-center justify-center bg-slate-950/80 px-4" role="dialog" aria-modal="true">
               <div className="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -3963,7 +4031,7 @@ export default function MaintenanceFaultCodesPage() {
           )}
 
           {dealerModal && (
-            <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/85 px-4 py-6" role="dialog" aria-modal="true">
+            <div className="fixed inset-0 z-[1600] flex items-start justify-center overflow-y-auto bg-slate-950/85 px-4 py-6" role="dialog" aria-modal="true">
               <div className="flex w-full max-w-4xl flex-col rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
                 <div className="flex items-start justify-between gap-3">
                   <div>

@@ -81,6 +81,10 @@ type ApiResult = {
   payload: Record<string, unknown>;
 };
 
+type TenantAssetVinLookups = {
+  vinByUnit: Map<string, string>;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -88,6 +92,58 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeUnitKey(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/^TRUCK\s*#?\s*/i, "")
+    .replace(/^UNIT\s*#?\s*/i, "")
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeVin(value: unknown): string {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function looksLikeVin(value: string): boolean {
+  return value.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/.test(value);
+}
+
+function maybeVin(value: unknown): string | null {
+  const normalized = normalizeVin(value);
+  return looksLikeVin(normalized) ? normalized : null;
+}
+
+async function getTenantAssetVinLookups(request: Request): Promise<TenantAssetVinLookups> {
+  const appUser = await getAppSessionUser(request);
+  if (!appUser?.tenantId) {
+    return { vinByUnit: new Map() };
+  }
+
+  const supabase = await getSupabaseServerClient();
+  const { data } = await supabase
+    .from("assets")
+    .select("asset_no, asset_unit_number, vin")
+    .eq("tenant_id", appUser.tenantId)
+    .not("vin", "is", null);
+
+  const vinByUnit = new Map<string, string>();
+  for (const row of data ?? []) {
+    const vin = maybeVin(row.vin);
+    if (!vin) continue;
+
+    const rawKeys = [String(row.asset_no ?? "").trim(), String(row.asset_unit_number ?? "").trim()];
+    for (const rawKey of rawKeys) {
+      const key = normalizeUnitKey(rawKey);
+      if (!key) continue;
+      if (!vinByUnit.has(key)) {
+        vinByUnit.set(key, vin);
+      }
+    }
+  }
+
+  return { vinByUnit };
 }
 
 async function getDistinctSamsaraKeys(request: Request): Promise<string[]> {
@@ -166,9 +222,64 @@ function getVehicleIdentity(row: Record<string, unknown>): { vehicleId: string; 
   return { vehicleId, vehicleName };
 }
 
-function toFaultEntry(sourceKeyIndex: number, row: Record<string, unknown>): FaultCodeEntry {
+function resolveVehicleVin(
+  row: Record<string, unknown>,
+  vehicleId: string,
+  vehicleName: string | undefined,
+  lookups: TenantAssetVinLookups
+): string | null {
+  const vehicle = asRecord(row.vehicle);
+  const asset = asRecord(row.asset);
+  const meta = asRecord(row.meta);
+  const stats = asRecord(row.stats);
+
+  const directCandidates: unknown[] = [
+    row.vin,
+    row.VIN,
+    row.vehicleVin,
+    row.vehicle_vin,
+    vehicle?.vin,
+    vehicle?.VIN,
+    asset?.vin,
+    asset?.VIN,
+    meta?.vin,
+    meta?.VIN,
+    stats?.vin,
+    stats?.VIN,
+  ];
+
+  for (const candidate of directCandidates) {
+    const vin = maybeVin(candidate);
+    if (vin) return vin;
+  }
+
+  const identityCandidates = [
+    vehicleName,
+    typeof row.name === "string" ? row.name : "",
+    typeof vehicle?.name === "string" ? vehicle.name : "",
+    vehicleId,
+    typeof vehicle?.id === "string" ? vehicle.id : "",
+    typeof row.vehicleId === "string" ? row.vehicleId : "",
+  ];
+
+  for (const candidate of identityCandidates) {
+    const key = normalizeUnitKey(candidate ?? "");
+    if (!key) continue;
+    const matchedVin = lookups.vinByUnit.get(key);
+    if (matchedVin) return matchedVin;
+  }
+
+  return null;
+}
+
+function toFaultEntry(
+  sourceKeyIndex: number,
+  row: Record<string, unknown>,
+  lookups: TenantAssetVinLookups
+): FaultCodeEntry {
   const { vehicleId, vehicleName } = getVehicleIdentity(row);
   const stats = extractStats(row);
+  const resolvedVin = resolveVehicleVin(row, vehicleId, vehicleName, lookups);
 
   const statTypeSet = new Set<string>(REQUESTED_STATS_TYPES);
   const rawVehicleBase: Record<string, unknown> = {};
@@ -186,6 +297,8 @@ function toFaultEntry(sourceKeyIndex: number, row: Record<string, unknown>): Fau
     stats,
     rawVehicle: {
       ...rawVehicleBase,
+      resolvedVin,
+      vin: resolvedVin ?? rawVehicleBase.vin,
       stats,
     },
   };
@@ -252,7 +365,11 @@ async function callSamsara(token: string, url: string): Promise<ApiResult> {
   }
 }
 
-async function fetchFaultCodesFromToken(token: string, sourceKeyIndex: number): Promise<TokenFetchSuccess> {
+async function fetchFaultCodesFromToken(
+  token: string,
+  sourceKeyIndex: number,
+  lookups: TenantAssetVinLookups
+): Promise<TokenFetchSuccess> {
   const rawPages: Record<string, unknown>[] = [];
   const failures: TokenFetchFailure[] = [];
   const requestedBatches = chunkTypes(STATS_SNAPSHOT_TYPES, MAX_TYPES_PER_REQUEST);
@@ -271,7 +388,7 @@ async function fetchFaultCodesFromToken(token: string, sourceKeyIndex: number): 
       rawPages.push(...chunk.rawPages);
 
       for (const row of chunk.rows) {
-        const entry = toFaultEntry(sourceKeyIndex, row);
+        const entry = toFaultEntry(sourceKeyIndex, row, lookups);
         const mergeKey = `${entry.sourceKeyIndex}:${entry.vehicleId}`;
         const existing = vehicleMap.get(mergeKey);
 
@@ -281,7 +398,7 @@ async function fetchFaultCodesFromToken(token: string, sourceKeyIndex: number): 
         }
 
         const mergedStats = { ...existing.stats, ...entry.stats };
-        const mergedRawVehicle = {
+        const mergedRawVehicle: Record<string, unknown> = {
           ...existing.rawVehicle,
           ...entry.rawVehicle,
           stats: mergedStats,
@@ -294,6 +411,13 @@ async function fetchFaultCodesFromToken(token: string, sourceKeyIndex: number): 
           faultCodes: mergedStats.faultCodes ?? existing.faultCodes,
           rawVehicle: mergedRawVehicle,
         });
+
+        const existingResolvedVin = normalizeVin(existing.rawVehicle.resolvedVin);
+        const entryResolvedVin = normalizeVin(entry.rawVehicle.resolvedVin);
+        if (!existingResolvedVin && entryResolvedVin) {
+          mergedRawVehicle.resolvedVin = entryResolvedVin;
+          mergedRawVehicle.vin = entryResolvedVin;
+        }
       }
     } catch (error) {
       const failureRecord = asRecord(error);
@@ -326,6 +450,7 @@ export async function GET(request: Request) {
 
   try {
     const orgKeys = await getDistinctSamsaraKeys(request);
+    const lookups = await getTenantAssetVinLookups(request);
     const keys = orgKeys.length > 0 ? orgKeys : fallbackToken ? [fallbackToken] : [];
 
     if (keys.length === 0) {
@@ -339,7 +464,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const successes = await Promise.all(keys.map((token, sourceKeyIndex) => fetchFaultCodesFromToken(token, sourceKeyIndex)));
+    const successes = await Promise.all(
+      keys.map((token, sourceKeyIndex) => fetchFaultCodesFromToken(token, sourceKeyIndex, lookups))
+    );
 
     const failures = successes.flatMap((result) => result.failures);
 
