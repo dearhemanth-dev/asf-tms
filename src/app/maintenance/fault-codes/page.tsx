@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import TopNav from "@/components/TopNav";
 import { APP_ROLES, type AppRole } from "@/lib/auth";
@@ -287,6 +287,90 @@ type RepairAlertCard = {
   occurrenceCount: number;
 };
 
+type RepairWindowRollup = {
+  cost7: number;
+  cost30: number;
+  cost60: number;
+  invoiceCount7: number;
+  invoiceCount30: number;
+  invoiceCount60: number;
+  lastRepairDate: string | null;
+};
+
+type RepairHistorySummaryResponse = {
+  asOfDate?: string;
+  byUnit?: Record<string, RepairWindowRollup>;
+  byVin?: Record<string, RepairWindowRollup>;
+  error?: string;
+};
+
+type VehicleRepairLookup = {
+  unit: string | null;
+  vin: string | null;
+};
+
+type RepairHistoryDetailRow = {
+  id: string;
+  unit_number: string;
+  vin: string;
+  invoice_number: string;
+  invoice_date: string | null;
+  payment_due_date: string | null;
+  effective_date: string;
+  vendor_name: string;
+  repair_category: string;
+  total_amount: number;
+  notes_text: string;
+  line_items: RepairHistoryLineItem[];
+};
+
+type RepairHistoryLineItem = {
+  id: string;
+  line_no: number | null;
+  line_type: "parts" | "labor" | "tax" | "fees" | "summary" | "other";
+  description: string;
+  quantity: string | null;
+  unit_price: string | null;
+  amount: number;
+};
+
+type RepairHistoryDetailResponse = {
+  rows?: RepairHistoryDetailRow[];
+  error?: string;
+};
+
+type RepairListModalState = {
+  vehicle: VehicleFaultView;
+  windowDays: 30 | 60;
+  resolvedUnit: string;
+  resolvedVin: string;
+};
+
+type RepairLineNoteModalState = {
+  date: string;
+  detail: string;
+  note: string;
+};
+
+type ScoredRepairHistoryLineItem = {
+  row: RepairHistoryDetailRow;
+  item: RepairHistoryLineItem;
+  score: number;
+  relevanceScore: number;
+  matchedTerms: string[];
+};
+
+type GroupedRelevantRepairItem = {
+  groupKey: string;
+  primaryEntry: ScoredRepairHistoryLineItem;
+  descriptions: string[];
+  totalAmount: number;
+  isDirectRelevant: boolean;
+  groupedItemKeys: Set<string>;
+};
+
+type RepairListSortMode = "relevance" | "cost" | "date";
+
 type LiveEstimateOverride = {
   laborHours: string;
   partsRange: string;
@@ -519,6 +603,223 @@ function findVin(rawVehicle: Record<string, unknown>): string | null {
   }
 
   return null;
+}
+
+function normalizeRepairUnit(value: unknown): string | null {
+  const normalized = toText(value).trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === "UNASSIGNED") return null;
+  if (normalized.startsWith("VEHICLE ")) return null;
+  return normalized;
+}
+
+function normalizeRepairVin(value: unknown): string | null {
+  const normalized = toText(value).trim().toUpperCase();
+  if (normalized.length < 8) return null;
+  return normalized;
+}
+
+function formatRepairCost(value: number): string {
+  return `$${Math.round(Math.max(0, value)).toLocaleString()}`;
+}
+
+function resolveVehicleRepairLookup(
+  vehicle: VehicleFaultView,
+  assetVehicleMeta: Record<string, AssetVehicleMeta>
+): VehicleRepairLookup {
+  const rawVin = findVin(vehicle.rawVehicle);
+  const matchedAsset = resolveAssetMetaForVehicle(vehicle, assetVehicleMeta, rawVin);
+  const vehicleRecord = asRecord(vehicle.rawVehicle.vehicle);
+  const assetRecord = asRecord(vehicle.rawVehicle.asset);
+
+  const unitCandidates = [
+    matchedAsset?.asset_unit_number,
+    toText(assetRecord?.asset_unit_number),
+    toText(assetRecord?.asset_no),
+    toText(vehicleRecord?.number),
+    toText(vehicleRecord?.id),
+    toText(vehicle.rawVehicle.unit_number),
+    toText(vehicle.rawVehicle.unitNumber),
+    vehicle.vehicleLabel,
+    vehicle.vehicleKey,
+  ];
+
+  const unit = unitCandidates.map((candidate) => normalizeRepairUnit(candidate)).find((candidate) => Boolean(candidate)) ?? null;
+  const vin = normalizeRepairVin(matchedAsset?.vin ?? rawVin);
+
+  return { unit, vin };
+}
+
+function tokenizeWords(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function deriveFaultKeywords(faults: FaultDetail[]): string[] {
+  const stopWords = new Set([
+    "active",
+    "after",
+    "before",
+    "code",
+    "detected",
+    "fault",
+    "module",
+    "sensor",
+    "signal",
+    "issue",
+    "engine",
+    "vehicle",
+    "repair",
+    "service",
+    "maintenance",
+    "replace",
+    "replacement",
+    "check",
+    "faults",
+    "system",
+    "with",
+  ]);
+
+  const blob = faults
+    .flatMap((fault) => [fault.description, fault.spnDescription, fault.fmiDescription])
+    .join(" ")
+    .toLowerCase();
+
+  const keywords = new Set<string>();
+  for (const token of tokenizeWords(blob)) {
+    if (!stopWords.has(token)) keywords.add(token);
+  }
+
+  return Array.from(keywords).slice(0, 36);
+}
+
+function deriveFaultCodeTokens(faults: FaultDetail[]): string[] {
+  const tokens = new Set<string>();
+  for (const fault of faults) {
+    const code = fault.code.trim().toLowerCase();
+    const spn = fault.spn.trim();
+    const fmi = fault.fmi.trim();
+    if (code) tokens.add(code);
+    if (spn) tokens.add(`spn ${spn}`.toLowerCase());
+    if (fmi) tokens.add(`fmi ${fmi}`.toLowerCase());
+    if (spn && fmi) tokens.add(`spn ${spn} fmi ${fmi}`.toLowerCase());
+  }
+  return Array.from(tokens);
+}
+
+function isPartLikeLineItem(item: RepairHistoryLineItem): boolean {
+  if (item.line_type === "parts") return true;
+  if (item.line_type === "labor" || item.line_type === "tax" || item.line_type === "fees" || item.line_type === "summary") {
+    return false;
+  }
+
+  const text = item.description.toLowerCase();
+  const partSignals = [
+    "clutch",
+    "cylinder",
+    "gasket",
+    "seal",
+    "valve",
+    "sensor",
+    "filter",
+    "pump",
+    "hose",
+    "bearing",
+    "switch",
+    "solenoid",
+    "injector",
+    "turbo",
+    "belt",
+    "kit",
+    "assembly",
+    "module",
+    "liner",
+    "compressor",
+    "actuator",
+    "cooler",
+    "manifold",
+    "head",
+  ];
+
+  return partSignals.some((signal) => text.includes(signal));
+}
+
+function scoreRepairLineItem(
+  row: RepairHistoryDetailRow,
+  item: RepairHistoryLineItem,
+  faultKeywords: string[],
+  faultCodeTokens: string[]
+): ScoredRepairHistoryLineItem {
+  const categoryText = row.repair_category.toLowerCase();
+  const itemText = item.description.toLowerCase();
+  const blob = [row.repair_category, row.notes_text, row.vendor_name, row.invoice_number, item.description, item.line_type]
+    .join(" ")
+    .toLowerCase();
+  const matchedTerms: string[] = [];
+  let rankingScore = 0;
+  let relevanceScore = 0;
+
+  for (const token of faultCodeTokens) {
+    const inItem = itemText.includes(token);
+    const inCategory = categoryText.includes(token);
+    const inBlob = blob.includes(token);
+
+    if (inItem || inCategory) {
+      relevanceScore += 12;
+      rankingScore += 12;
+      matchedTerms.push(token.toUpperCase());
+    } else if (inBlob) {
+      // Row-level mentions contribute to ranking but do not alone mark as relevant.
+      rankingScore += 1;
+    }
+  }
+
+  for (const keyword of faultKeywords) {
+    if (itemText.includes(keyword)) {
+      relevanceScore += 4;
+      rankingScore += 4;
+      matchedTerms.push(keyword);
+    } else if (categoryText.includes(keyword)) {
+      relevanceScore += 2;
+      rankingScore += 2;
+      matchedTerms.push(keyword);
+    } else if (blob.includes(keyword)) {
+      rankingScore += 0.5;
+    }
+  }
+
+  const amountBoost = Math.min(3, Math.floor(item.amount / 700));
+  rankingScore += amountBoost;
+
+  if (item.line_type === "summary") {
+    rankingScore = Math.max(0, rankingScore - 1);
+  }
+
+  return {
+    row,
+    item,
+    score: Number(rankingScore.toFixed(2)),
+    relevanceScore: Number(relevanceScore.toFixed(2)),
+    matchedTerms: Array.from(new Set(matchedTerms)).slice(0, 5),
+  };
+}
+
+function formatIsoDate(value: string | null): string {
+  const normalized = toText(value).trim();
+  if (!normalized) return "-";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return normalized;
+  return normalized.slice(0, 10);
+}
+
+function daysBetweenDateOnly(left: string, right: string): number {
+  const leftTime = Date.parse(`${left}T00:00:00Z`);
+  const rightTime = Date.parse(`${right}T00:00:00Z`);
+  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return Number.POSITIVE_INFINITY;
+  return Math.abs(leftTime - rightTime) / (1000 * 60 * 60 * 24);
 }
 
 function toList(value: unknown): unknown[] {
@@ -1618,10 +1919,20 @@ export default function MaintenanceFaultCodesPage() {
   const [dateTimeDisplay, setDateTimeDisplay] = useState<DateTimeDisplay | null>(null);
   const [activeRepairCardByVehicle, setActiveRepairCardByVehicle] = useState<Record<string, number>>({});
   const [repairCardContentHeights, setRepairCardContentHeights] = useState<Record<string, number>>({});
+  const [repairHistoryByVehicle, setRepairHistoryByVehicle] = useState<Record<string, RepairWindowRollup | null>>({});
+  const [repairHistoryLoading, setRepairHistoryLoading] = useState(false);
+  const [repairListModal, setRepairListModal] = useState<RepairListModalState | null>(null);
+  const [repairListRows, setRepairListRows] = useState<RepairHistoryDetailRow[]>([]);
+  const [repairListLoading, setRepairListLoading] = useState(false);
+  const [repairListError, setRepairListError] = useState<string | null>(null);
+  const [repairListSort, setRepairListSort] = useState<RepairListSortMode>("relevance");
+  const [expandedIncidentContextByItem, setExpandedIncidentContextByItem] = useState<Record<string, boolean>>({});
+  const [repairLineNoteModal, setRepairLineNoteModal] = useState<RepairLineNoteModalState | null>(null);
   const repairDeckTouchStartY = useRef<Record<string, number | null>>({});
   const repairDeckWheelLockUntil = useRef<Record<string, number>>({});
   const sortedVehicleKeysRef = useRef<string[]>([]);
   const repairCardCountByVehicleRef = useRef<Record<string, number>>({});
+  const repairListRequestIdRef = useRef(0);
   const pushLoading = pushEnableLoading || pushSendLoading || pushSelfTestLoading || pushWorkflowLoading;
 
   const setFocusedRepairCard = useCallback((vehicleKey: string, nextIndex: number, cardCount: number) => {
@@ -3000,6 +3311,406 @@ export default function MaintenanceFaultCodesPage() {
     });
   }, [payload, dateTimeDisplay]);
 
+  const vehicleRepairLookups = useMemo<Record<string, VehicleRepairLookup>>(() => {
+    const next: Record<string, VehicleRepairLookup> = {};
+    for (const vehicle of vehicles) {
+      next[vehicle.vehicleKey] = resolveVehicleRepairLookup(vehicle, assetVehicleMeta);
+    }
+    return next;
+  }, [vehicles, assetVehicleMeta]);
+
+  const openRepairListModal = useCallback(
+    async (vehicle: VehicleFaultView, windowDays: 30 | 60) => {
+      const lookup = vehicleRepairLookups[vehicle.vehicleKey] ?? { unit: null, vin: null };
+      const resolvedUnit = lookup.unit ?? vehicle.vehicleLabel;
+      const resolvedVin = lookup.vin ?? "VIN unavailable";
+
+      setRepairListModal({ vehicle, windowDays, resolvedUnit, resolvedVin });
+      setRepairListRows([]);
+      setRepairListError(null);
+      setRepairListSort("relevance");
+      setExpandedIncidentContextByItem({});
+      setRepairLineNoteModal(null);
+
+      if (!lookup.unit && !lookup.vin) {
+        setRepairListError("No matching unit or VIN was found for this vehicle.");
+        return;
+      }
+
+      const requestId = repairListRequestIdRef.current + 1;
+      repairListRequestIdRef.current = requestId;
+      setRepairListLoading(true);
+
+      try {
+        const query = new URLSearchParams({ days: String(windowDays) });
+        if (lookup.unit) query.set("unit", lookup.unit);
+        if (lookup.vin) query.set("vin", lookup.vin);
+
+        const response = await fetch(`${FLEET_API_ROUTES.repairHistoryDetail}?${query.toString()}`, { cache: "no-store" });
+        const payload = (await response.json().catch(() => ({}))) as RepairHistoryDetailResponse;
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Unable to load repairs list.");
+        }
+
+        if (repairListRequestIdRef.current !== requestId) return;
+        setRepairListRows(Array.isArray(payload.rows) ? payload.rows : []);
+      } catch (error) {
+        if (repairListRequestIdRef.current !== requestId) return;
+        setRepairListRows([]);
+        setRepairListError(error instanceof Error ? error.message : "Unable to load repairs list.");
+      } finally {
+        if (repairListRequestIdRef.current === requestId) {
+          setRepairListLoading(false);
+        }
+      }
+    },
+    [vehicleRepairLookups]
+  );
+
+  const repairListView = useMemo(() => {
+    if (!repairListModal) {
+      return {
+        scoredItems: [] as ScoredRepairHistoryLineItem[],
+        orderedItems: [] as ScoredRepairHistoryLineItem[],
+        orderedRelevantItems: [] as ScoredRepairHistoryLineItem[],
+        orderedRelevantGroups: [] as GroupedRelevantRepairItem[],
+        orderedOtherPartItems: [] as ScoredRepairHistoryLineItem[],
+        relevantPartItems: [] as ScoredRepairHistoryLineItem[],
+        directRelevantPartItems: [] as ScoredRepairHistoryLineItem[],
+        linkedPartItems: [] as ScoredRepairHistoryLineItem[],
+        contextItems: [] as ScoredRepairHistoryLineItem[],
+        contextByRelevantGroupKey: {} as Record<string, ScoredRepairHistoryLineItem[]>,
+        contextCountByRelevantGroupKey: {} as Record<string, number>,
+        relevantItemKeys: new Set<string>(),
+        linkedItemKeys: new Set<string>(),
+        hasRelevantMatches: false,
+        windowTotal: 0,
+        shownTotal: 0,
+      };
+    }
+
+    const faultKeywords = deriveFaultKeywords(repairListModal.vehicle.faults);
+    const faultCodeTokens = deriveFaultCodeTokens(repairListModal.vehicle.faults);
+    const scoredItems = repairListRows
+      .flatMap((row) => {
+        const hasLineItems = row.line_items.length > 0;
+        const items = hasLineItems
+          ? row.line_items
+          : [
+              {
+                id: `${row.id}-summary`,
+                line_no: null,
+                line_type: "summary" as const,
+                description: row.notes_text || row.repair_category || "Invoice summary",
+                quantity: null,
+                unit_price: null,
+                amount: row.total_amount,
+              },
+            ];
+
+        const scored = items.map((item) => scoreRepairLineItem(row, item, faultKeywords, faultCodeTokens));
+
+        if (hasLineItems) {
+          const itemizedTotal = row.line_items.reduce((sum, item) => sum + item.amount, 0);
+          const nonItemizedBalance = Number((row.total_amount - itemizedTotal).toFixed(2));
+
+          if (nonItemizedBalance > 0.99) {
+            scored.push(
+              scoreRepairLineItem(
+                row,
+                {
+                  id: `${row.id}-balance`,
+                  line_no: null,
+                  line_type: "summary",
+                  description: "Invoice balance (non-itemized charges)",
+                  quantity: null,
+                  unit_price: null,
+                  amount: nonItemizedBalance,
+                },
+                faultKeywords,
+                faultCodeTokens
+              )
+            );
+          }
+        }
+
+        return scored;
+      })
+      .sort((left, right) => {
+        if (left.score !== right.score) return right.score - left.score;
+        if (left.row.effective_date !== right.row.effective_date) {
+          return right.row.effective_date.localeCompare(left.row.effective_date);
+        }
+        return right.item.amount - left.item.amount;
+      });
+
+    const rowFaultLinkedById = new Map<string, boolean>();
+    for (const row of repairListRows) {
+      const rowBlob = [row.repair_category, row.notes_text, row.invoice_number].join(" ").toLowerCase();
+      const hasCodeToken = faultCodeTokens.some((token) => token.length > 0 && rowBlob.includes(token));
+      const keywordHits = faultKeywords.reduce((count, keyword) => (rowBlob.includes(keyword) ? count + 1 : count), 0);
+      rowFaultLinkedById.set(row.id, hasCodeToken || keywordHits >= 2);
+    }
+
+    const partLikeItems = scoredItems.filter((entry) => isPartLikeLineItem(entry.item));
+    let directRelevantPartItems = partLikeItems.filter((entry) => entry.relevanceScore >= 4);
+    let directRelevantKeys = new Set(directRelevantPartItems.map((entry) => `${entry.row.id}::${entry.item.id}`));
+    const directRelevantRowIds = new Set(directRelevantPartItems.map((entry) => entry.row.id));
+    let linkedPartItems = partLikeItems.filter(
+      (entry) =>
+        !directRelevantKeys.has(`${entry.row.id}::${entry.item.id}`) &&
+        (directRelevantRowIds.has(entry.row.id) || rowFaultLinkedById.get(entry.row.id) === true)
+    );
+
+    // Fallback: if strict direct matches are empty, promote top linked parts to keep relevance useful.
+    if (directRelevantPartItems.length === 0 && linkedPartItems.length > 0) {
+      const promotedFallbackItems = [...linkedPartItems]
+        .sort((left, right) => {
+          if (left.score !== right.score) return right.score - left.score;
+          if (left.item.amount !== right.item.amount) return right.item.amount - left.item.amount;
+          return right.row.effective_date.localeCompare(left.row.effective_date);
+        })
+        .slice(0, Math.min(4, linkedPartItems.length));
+
+      const promotedKeys = new Set(promotedFallbackItems.map((entry) => `${entry.row.id}::${entry.item.id}`));
+      directRelevantPartItems = promotedFallbackItems;
+      directRelevantKeys = promotedKeys;
+      linkedPartItems = linkedPartItems.filter((entry) => !promotedKeys.has(`${entry.row.id}::${entry.item.id}`));
+    }
+    const relevantPartItems = [...directRelevantPartItems, ...linkedPartItems];
+
+    const hasRelevantMatches = directRelevantPartItems.length > 0;
+    const relevantItemKeys = new Set(directRelevantPartItems.map((entry) => `${entry.row.id}::${entry.item.id}`));
+    const linkedItemKeys = new Set(linkedPartItems.map((entry) => `${entry.row.id}::${entry.item.id}`));
+
+    const contextByRelevantGroupKey: Record<string, ScoredRepairHistoryLineItem[]> = {};
+    const contextCountByRelevantGroupKey: Record<string, number> = {};
+    const contextItemsBucket: ScoredRepairHistoryLineItem[] = [];
+
+    const byDateDesc = (left: ScoredRepairHistoryLineItem, right: ScoredRepairHistoryLineItem) => {
+      if (left.row.effective_date !== right.row.effective_date) {
+        return right.row.effective_date.localeCompare(left.row.effective_date);
+      }
+      return right.item.amount - left.item.amount;
+    };
+
+    const byCostDesc = (left: ScoredRepairHistoryLineItem, right: ScoredRepairHistoryLineItem) => {
+      if (left.item.amount !== right.item.amount) return right.item.amount - left.item.amount;
+      return byDateDesc(left, right);
+    };
+
+    const byRelevance = (left: ScoredRepairHistoryLineItem, right: ScoredRepairHistoryLineItem) => {
+      if (left.relevanceScore !== right.relevanceScore) return right.relevanceScore - left.relevanceScore;
+      if (left.score !== right.score) return right.score - left.score;
+      return byDateDesc(left, right);
+    };
+
+    let orderedItems: ScoredRepairHistoryLineItem[] = [];
+    let orderedRelevantItems: ScoredRepairHistoryLineItem[] = [];
+    let orderedContextItems: ScoredRepairHistoryLineItem[] = [];
+    let orderedOtherPartItems: ScoredRepairHistoryLineItem[] = [];
+    if (!hasRelevantMatches) {
+      if (repairListSort === "cost") {
+        orderedItems = [...partLikeItems].sort(byCostDesc);
+      } else if (repairListSort === "date") {
+        orderedItems = [...partLikeItems].sort(byDateDesc);
+      } else {
+        orderedItems = [...partLikeItems].sort(byDateDesc);
+      }
+    } else if (repairListSort === "cost") {
+      orderedRelevantItems = [...directRelevantPartItems].sort(byCostDesc).concat([...linkedPartItems].sort(byCostDesc));
+    } else if (repairListSort === "date") {
+      orderedRelevantItems = [...directRelevantPartItems].sort(byDateDesc).concat([...linkedPartItems].sort(byDateDesc));
+    } else {
+      orderedRelevantItems = [...directRelevantPartItems].sort(byRelevance).concat([...linkedPartItems].sort(byDateDesc));
+    }
+
+    const groupedMap = new Map<string, {
+      primaryEntry: ScoredRepairHistoryLineItem;
+      descriptions: string[];
+      totalAmount: number;
+      isDirectRelevant: boolean;
+      groupedItemKeys: Set<string>;
+    }>();
+
+    for (const entry of orderedRelevantItems) {
+      const entryKey = `${entry.row.id}::${entry.item.id}`;
+      const relevanceBucket = relevantItemKeys.has(entryKey) ? "direct" : "indirect";
+      const groupKey = `${entry.row.id}::${entry.row.effective_date}::${relevanceBucket}`;
+      const existing = groupedMap.get(groupKey);
+
+      if (!existing) {
+        groupedMap.set(groupKey, {
+          primaryEntry: entry,
+          descriptions: [entry.item.description],
+          totalAmount: entry.item.amount,
+          isDirectRelevant: relevantItemKeys.has(entryKey),
+          groupedItemKeys: new Set([entryKey]),
+        });
+        continue;
+      }
+
+      existing.totalAmount += entry.item.amount;
+      existing.groupedItemKeys.add(entryKey);
+      if (!existing.descriptions.includes(entry.item.description)) {
+        existing.descriptions.push(entry.item.description);
+      }
+      if (relevantItemKeys.has(entryKey)) {
+        existing.isDirectRelevant = true;
+      }
+    }
+
+    const orderedRelevantGroups = Array.from(groupedMap.entries()).map(([groupKey, group]) => ({
+      groupKey,
+      primaryEntry: group.primaryEntry,
+      descriptions: group.descriptions,
+      totalAmount: Number(group.totalAmount.toFixed(2)),
+      isDirectRelevant: group.isDirectRelevant,
+      groupedItemKeys: group.groupedItemKeys,
+    }));
+
+    if (hasRelevantMatches) {
+      for (const relevantGroup of orderedRelevantGroups) {
+        const relevantEntry = relevantGroup.primaryEntry;
+        const relevantTokens = new Set(
+          relevantGroup.descriptions.flatMap((description) => tokenizeWords(description))
+        );
+        const relevantDate = relevantEntry.row.effective_date;
+        const relevantVendor = relevantEntry.row.vendor_name.toLowerCase();
+        const relevantInvoiceId = relevantEntry.row.id;
+        const groupedItemKeys = relevantGroup.groupedItemKeys;
+
+        const sameInvoicePartCandidates = partLikeItems.filter((candidate) => {
+          const candidateKey = `${candidate.row.id}::${candidate.item.id}`;
+          if (groupedItemKeys.has(candidateKey)) return false;
+          return candidate.row.id === relevantInvoiceId;
+        });
+
+        const sameInvoiceCandidates =
+          sameInvoicePartCandidates.length > 0
+            ? sameInvoicePartCandidates
+            : scoredItems.filter((candidate) => {
+                const candidateKey = `${candidate.row.id}::${candidate.item.id}`;
+                if (groupedItemKeys.has(candidateKey)) return false;
+                if (candidate.row.id !== relevantInvoiceId) return false;
+                return candidate.item.line_type !== "summary";
+              });
+
+        const nearbyRelatedCandidates = partLikeItems.filter((candidate) => {
+          const candidateKey = `${candidate.row.id}::${candidate.item.id}`;
+          if (groupedItemKeys.has(candidateKey)) return false;
+          if (relevantItemKeys.has(candidateKey) || linkedItemKeys.has(candidateKey)) return false;
+          if (candidate.row.id === relevantInvoiceId) return false;
+
+          const daysApart = daysBetweenDateOnly(relevantDate, candidate.row.effective_date);
+          if (!Number.isFinite(daysApart) || daysApart > 14) return false;
+
+          const sameVendor = candidate.row.vendor_name.toLowerCase() === relevantVendor;
+          const candidateTokens = tokenizeWords(candidate.item.description);
+          const tokenOverlap = candidateTokens.some((token) => relevantTokens.has(token));
+
+          return sameVendor || tokenOverlap;
+        });
+
+        const byContextOrder = (left: ScoredRepairHistoryLineItem, right: ScoredRepairHistoryLineItem) => {
+          const leftSameInvoice = left.row.id === relevantInvoiceId ? 1 : 0;
+          const rightSameInvoice = right.row.id === relevantInvoiceId ? 1 : 0;
+          if (leftSameInvoice !== rightSameInvoice) return rightSameInvoice - leftSameInvoice;
+
+          const leftDays = daysBetweenDateOnly(relevantDate, left.row.effective_date);
+          const rightDays = daysBetweenDateOnly(relevantDate, right.row.effective_date);
+          if (leftDays !== rightDays) return leftDays - rightDays;
+
+          if (left.item.amount !== right.item.amount) return right.item.amount - left.item.amount;
+          return right.row.effective_date.localeCompare(left.row.effective_date);
+        };
+
+        const sortedSameInvoice = [...sameInvoiceCandidates].sort(byContextOrder);
+        const sortedNearby = [...nearbyRelatedCandidates].sort(byContextOrder);
+        const sortedCandidates = [...sortedSameInvoice, ...sortedNearby.slice(0, 8)];
+
+        contextByRelevantGroupKey[relevantGroup.groupKey] = sortedCandidates;
+        contextCountByRelevantGroupKey[relevantGroup.groupKey] = sortedSameInvoice.length + sortedNearby.length;
+        contextItemsBucket.push(...sortedCandidates);
+      }
+    }
+
+    const contextItems = Array.from(
+      new Map(contextItemsBucket.map((entry) => [`${entry.row.id}::${entry.item.id}`, entry])).values()
+    );
+
+    const classifiedItemKeys = new Set([
+      ...Array.from(relevantItemKeys),
+      ...Array.from(linkedItemKeys),
+    ]);
+
+    orderedOtherPartItems = scoredItems.filter(
+      (entry) =>
+        entry.item.line_type !== "summary" &&
+        !classifiedItemKeys.has(`${entry.row.id}::${entry.item.id}`)
+    );
+    if (repairListSort === "cost") {
+      orderedOtherPartItems = [...orderedOtherPartItems].sort(byCostDesc);
+    } else {
+      orderedOtherPartItems = [...orderedOtherPartItems].sort(byDateDesc);
+    }
+
+    if (hasRelevantMatches) {
+      if (repairListSort === "cost") {
+        orderedContextItems = [...contextItems].sort(byCostDesc);
+      } else {
+        orderedContextItems = [...contextItems].sort(byDateDesc);
+      }
+      orderedItems = orderedRelevantItems.concat(orderedOtherPartItems);
+    }
+
+    const windowTotal = Number(repairListRows.reduce((sum, row) => sum + row.total_amount, 0).toFixed(2));
+    const shownTotal = Number(orderedItems.reduce((sum, entry) => sum + entry.item.amount, 0).toFixed(2));
+
+    return {
+      scoredItems,
+      orderedItems,
+      orderedRelevantItems,
+      orderedRelevantGroups,
+      orderedOtherPartItems,
+      relevantPartItems,
+      directRelevantPartItems,
+      linkedPartItems,
+      contextItems,
+      contextByRelevantGroupKey,
+      contextCountByRelevantGroupKey,
+      relevantItemKeys,
+      linkedItemKeys,
+      hasRelevantMatches,
+      windowTotal,
+      shownTotal,
+    };
+  }, [repairListModal, repairListRows, repairListSort]);
+
+  const repairModalFaultCodes = useMemo(() => {
+    if (!repairListModal) return [] as string[];
+
+    return Array.from(
+      new Set(
+        repairListModal.vehicle.faults
+          .map((fault) => {
+            const code = fault.code.trim();
+            const spn = fault.spn.trim();
+            const fmi = fault.fmi.trim();
+
+            if (code.length > 0 && code !== "-") return code;
+            if (spn.length > 0 && spn !== "-" && fmi.length > 0 && fmi !== "-") {
+              return `SPN ${spn} / FMI ${fmi}`;
+            }
+            if (spn.length > 0 && spn !== "-") return `SPN ${spn}`;
+            if (fmi.length > 0 && fmi !== "-") return `FMI ${fmi}`;
+            return "";
+          })
+          .filter((code) => code.length > 0)
+      )
+    );
+  }, [repairListModal]);
+
   const totalFaults = useMemo(() => {
     return vehicles.reduce((sum, row) => sum + row.faultCount, 0);
   }, [vehicles]);
@@ -3041,6 +3752,84 @@ export default function MaintenanceFaultCodesPage() {
 
     return () => window.cancelAnimationFrame(frame);
   }, [expandedVehicleKey]);
+
+  useEffect(() => {
+    if (loadingProfile || (effectiveRole !== "maintenance" && effectiveRole !== "management")) return;
+
+    let cancelled = false;
+
+    async function loadRepairHistorySummary() {
+      if (vehicles.length === 0) {
+        setRepairHistoryByVehicle({});
+        return;
+      }
+
+      const units = Array.from(
+        new Set(
+          vehicles
+            .map((vehicle) => vehicleRepairLookups[vehicle.vehicleKey]?.unit ?? null)
+            .filter((value): value is string => Boolean(value))
+        )
+      );
+      const vins = Array.from(
+        new Set(
+          vehicles
+            .map((vehicle) => vehicleRepairLookups[vehicle.vehicleKey]?.vin ?? null)
+            .filter((value): value is string => Boolean(value))
+        )
+      );
+
+      if (units.length === 0 && vins.length === 0) {
+        if (!cancelled) {
+          const emptyMap = vehicles.reduce<Record<string, RepairWindowRollup | null>>((acc, vehicle) => {
+            acc[vehicle.vehicleKey] = null;
+            return acc;
+          }, {});
+          setRepairHistoryByVehicle(emptyMap);
+        }
+        return;
+      }
+
+      setRepairHistoryLoading(true);
+
+      try {
+        const response = await fetch(FLEET_API_ROUTES.repairHistorySummary, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ units, vins }),
+        });
+        const data = (await response.json().catch(() => ({}))) as RepairHistorySummaryResponse;
+
+        if (!response.ok) {
+          throw new Error(data.error ?? "Unable to load repairs history summary.");
+        }
+
+        if (cancelled) return;
+
+        const nextByVehicle: Record<string, RepairWindowRollup | null> = {};
+        for (const vehicle of vehicles) {
+          const lookup = vehicleRepairLookups[vehicle.vehicleKey];
+          const byUnit = lookup?.unit ? data.byUnit?.[lookup.unit] : undefined;
+          const byVin = lookup?.vin ? data.byVin?.[lookup.vin] : undefined;
+          nextByVehicle[vehicle.vehicleKey] = byUnit ?? byVin ?? null;
+        }
+
+        setRepairHistoryByVehicle(nextByVehicle);
+      } catch {
+        if (cancelled) return;
+      } finally {
+        if (!cancelled) {
+          setRepairHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadRepairHistorySummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicles, vehicleRepairLookups, loadingProfile, effectiveRole]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3632,6 +4421,14 @@ export default function MaintenanceFaultCodesPage() {
                 const activeCard = pilotCards[activeCardIndex];
                 const activeCardKey = activeCard ? getCardLookupKey(vehicle.vehicleKey, activeCard) : null;
                 const activeCardHeight = activeCardKey ? repairCardContentHeights[activeCardKey] ?? 488 : 488;
+                const repairHistory = repairHistoryByVehicle[vehicle.vehicleKey] ?? null;
+                const activeFaultCodes = Array.from(
+                  new Set(
+                    vehicle.faults
+                      .map((fault) => fault.code.trim())
+                      .filter((code) => code.length > 0 && code !== "-")
+                  )
+                );
 
                 return (
                 <article
@@ -3653,7 +4450,22 @@ export default function MaintenanceFaultCodesPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex w-fit rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-xs font-semibold text-cyan-200">
                         {vehicle.faultCount} fault{vehicle.faultCount === 1 ? "" : "s"}
+                        {activeFaultCodes.length > 0 ? `: ${activeFaultCodes.join(", ")}` : ""}
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => void openRepairListModal(vehicle, 30)}
+                        className="inline-flex w-fit rounded-full border border-emerald-500/45 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20"
+                      >
+                        30 Days {formatRepairCost(repairHistory?.cost30 ?? 0)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openRepairListModal(vehicle, 60)}
+                        className="inline-flex w-fit rounded-full border border-emerald-500/45 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20"
+                      >
+                        60 Days {formatRepairCost(repairHistory?.cost60 ?? 0)}
+                      </button>
                       {vehicle.alertLevel && (
                         <span className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-xs font-semibold ${vehicle.alertLevel.className}`}>
                           {vehicle.alertLevel.label}
@@ -3978,6 +4790,358 @@ export default function MaintenanceFaultCodesPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {repairListModal && (
+            <div className="fixed inset-0 z-[1600] flex items-start justify-center overflow-y-auto bg-slate-950/85 px-4 py-6" role="dialog" aria-modal="true">
+              <div className="w-full max-w-5xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-300">Repairs {repairListModal.windowDays} Days</p>
+                    <h3 className="text-lg font-bold text-slate-100">{repairListModal.vehicle.vehicleLabel}</h3>
+                    <p className="mt-1 text-xs text-slate-400">Unit: {repairListModal.resolvedUnit} • VIN: {repairListModal.resolvedVin}</p>
+                    <p className="mt-1 text-xs text-cyan-100/90">
+                      Active faults: {repairListModal.vehicle.faultCount}
+                      {repairModalFaultCodes.length > 0 ? `: ${repairModalFaultCodes.join(", ")}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRepairListModal(null);
+                      setExpandedIncidentContextByItem({});
+                      setRepairLineNoteModal(null);
+                    }}
+                    className="rounded-md border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {repairListError && (
+                  <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    {repairListError}
+                  </div>
+                )}
+
+                {repairListLoading ? (
+                  <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-300">
+                    Loading repairs list...
+                  </div>
+                ) : repairListRows.length === 0 ? (
+                  <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-slate-300">
+                    No repairs found in the selected {repairListModal.windowDays}-day window.
+                  </div>
+                ) : (
+                  <section className="mt-4 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold text-slate-100">Fault-Relevant Parts in {repairListModal.windowDays} Days Window</h4>
+                      <label className="flex items-center gap-2 text-xs text-slate-300">
+                        Sort
+                        <select
+                          value={repairListSort}
+                          onChange={(event) => setRepairListSort(event.target.value as RepairListSortMode)}
+                          className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100"
+                        >
+                          <option value="relevance">Relevance</option>
+                          <option value="cost">Cost (High to Low)</option>
+                          <option value="date">Date (Newest First)</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Relevant parts: {repairListView.directRelevantPartItems.length} • Indirect parts: {repairListView.linkedPartItems.length} • Other repairs: {repairListView.orderedOtherPartItems.length} • Incident context lines: {repairListView.contextItems.length}
+                    </p>
+                    {!repairListView.hasRelevantMatches && (
+                      <p className="mt-1 text-xs text-amber-200/90">
+                        No fault-linked matches found. Showing parts history in this window.
+                      </p>
+                    )}
+                    <p className="mt-1 text-xs text-slate-400">Showing {formatRepairCost(repairListView.shownTotal)} of {formatRepairCost(repairListView.windowTotal)} total repairs.</p>
+                    {repairListView.orderedItems.length === 0 ? (
+                      <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-300">
+                        No repair history was identified in this window.
+                      </div>
+                    ) : (
+                      <div className="mt-2 overflow-x-auto rounded-lg border border-slate-800 [scrollbar-width:thin]">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="sticky top-0 bg-slate-900 text-slate-400">
+                            <tr>
+                              <th className="px-2 py-2 font-semibold">Date</th>
+                              <th className="px-2 py-2 font-semibold">Line Detail</th>
+                              <th className="px-2 py-2 font-semibold text-right">Cost</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {!repairListView.hasRelevantMatches &&
+                              repairListView.orderedItems.map((entry) => {
+                                return (
+                                  <tr key={`parts-row-${entry.row.id}-${entry.item.id}`} className="border-t border-slate-800 text-slate-200">
+                                    <td className="px-1.5 py-2 md:px-2">{formatIsoDate(entry.row.effective_date)}</td>
+                                    <td className="px-1.5 py-2 align-top md:px-2">
+                                      <p className="whitespace-normal break-words font-semibold text-slate-100">{entry.item.description}</p>
+                                      {entry.row.notes_text ? (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setRepairLineNoteModal({
+                                              date: formatIsoDate(entry.row.effective_date),
+                                              detail: entry.item.description,
+                                              note: entry.row.notes_text,
+                                            })
+                                          }
+                                          className="mt-1 rounded border border-slate-600 bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-700"
+                                        >
+                                          Notes
+                                        </button>
+                                      ) : null}
+                                    </td>
+                                    <td className="px-1.5 py-2 text-right text-cyan-200 md:px-2">{formatRepairCost(entry.item.amount)}</td>
+                                  </tr>
+                                );
+                              })}
+
+                            {repairListView.hasRelevantMatches &&
+                              repairListView.orderedRelevantGroups.map((group) => {
+                                const entry = group.primaryEntry;
+                                const entryKey = group.groupKey;
+                                const contextRows = repairListView.contextByRelevantGroupKey[entryKey] ?? [];
+                                const contextCount = repairListView.contextCountByRelevantGroupKey[entryKey] ?? contextRows.length;
+                                const isDirectRelevant = group.isDirectRelevant;
+                                const isLinkedPart = !group.isDirectRelevant;
+
+                                return (
+                                  <Fragment key={`relevant-group-${group.groupKey}`}>
+                                    <tr
+                                      className={`border-t border-slate-800 text-slate-200 ${
+                                        isDirectRelevant
+                                          ? "bg-emerald-500/14 ring-1 ring-inset ring-emerald-400/30"
+                                          : "bg-cyan-500/10 ring-1 ring-inset ring-cyan-400/25"
+                                      }`}
+                                    >
+                                      <td className="px-1.5 py-2 md:px-2">{formatIsoDate(entry.row.effective_date)}</td>
+                                      <td className="px-1.5 py-2 align-top md:px-2">
+                                        <p className="whitespace-normal break-words font-semibold text-slate-100">{group.descriptions.join(", ")}</p>
+                                        <p className="mt-0.5 hidden text-[10px] uppercase tracking-[0.08em] text-slate-400 md:block">
+                                          invoice {entry.row.invoice_number}
+                                        </p>
+                                        {isDirectRelevant ? (
+                                          <span className="mt-1 inline-flex rounded-full border border-emerald-300/40 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-emerald-100">
+                                            Relevant
+                                          </span>
+                                        ) : isLinkedPart ? (
+                                          <span className="mt-1 inline-flex rounded-full border border-cyan-300/40 bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-cyan-100">
+                                            Indirect
+                                          </span>
+                                        ) : null}
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExpandedIncidentContextByItem((prev) => ({
+                                              ...prev,
+                                              [entryKey]: !prev[entryKey],
+                                            }))
+                                          }
+                                          className="mt-1 rounded border border-cyan-400/50 bg-cyan-500/20 px-2 py-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/30"
+                                        >
+                                          {expandedIncidentContextByItem[entryKey] ? `Hide Incident Context (${contextCount})` : `Incident Context (${contextCount})`}
+                                        </button>
+                                        {entry.row.notes_text ? (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setRepairLineNoteModal({
+                                                date: formatIsoDate(entry.row.effective_date),
+                                                detail: entry.item.description,
+                                                note: entry.row.notes_text,
+                                              })
+                                            }
+                                            className="mt-1 rounded border border-amber-300/50 bg-amber-500/20 px-2 py-1 text-xs font-semibold text-amber-100 hover:bg-amber-500/30"
+                                          >
+                                            Notes
+                                          </button>
+                                        ) : null}
+                                      </td>
+                                      <td className={`px-1.5 py-2 text-right md:px-2 ${isDirectRelevant ? "text-emerald-200" : "text-cyan-200"}`}>
+                                        {formatRepairCost(group.totalAmount)}
+                                      </td>
+                                    </tr>
+
+                                    {expandedIncidentContextByItem[entryKey] && (
+                                      <tr className="border-t border-slate-800 bg-slate-900/60 text-slate-200">
+                                        <td colSpan={3} className="px-2 py-1.5">
+                                          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-cyan-200">Incident Context</p>
+                                          <div className="mt-1 rounded border border-slate-800 bg-slate-950/50 p-2 text-[11px] text-slate-300">
+                                            <p className="font-semibold text-slate-100">
+                                              Invoice {entry.row.invoice_number} • {formatIsoDate(entry.row.effective_date)}
+                                            </p>
+                                            <p className="mt-0.5 text-slate-400">
+                                              Vendor: {entry.row.vendor_name} • Category: {entry.row.repair_category}
+                                            </p>
+                                            <p className="mt-0.5 text-slate-400">
+                                              Grouped parts: {formatRepairCost(group.totalAmount)} • Invoice total: {formatRepairCost(entry.row.total_amount)}
+                                            </p>
+                                            {entry.row.notes_text ? (
+                                              <p className="mt-1 text-slate-200"><span className="font-semibold text-amber-200">Notes:</span> {entry.row.notes_text}</p>
+                                            ) : (
+                                              <p className="mt-1 text-slate-500">No notes captured for this incident.</p>
+                                            )}
+                                          </div>
+
+                                          {contextRows.length > 0 ? (
+                                            <div className="mt-2 overflow-x-auto rounded border border-slate-800 [scrollbar-width:thin]">
+                                              <table className="min-w-full text-left text-[11px]">
+                                                <thead className="bg-slate-900 text-slate-400">
+                                                  <tr>
+                                                    <th className="px-2 py-1.5 font-semibold">Date</th>
+                                                    <th className="px-2 py-1.5 font-semibold">Context Detail</th>
+                                                    <th className="px-2 py-1.5 text-right font-semibold">Cost</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {contextRows.map((contextEntry) => {
+                                                    return (
+                                                      <tr key={`context-row-${contextEntry.row.id}-${contextEntry.item.id}`} className="border-t border-slate-800 text-slate-300">
+                                                        <td className="px-2 py-1.5">{formatIsoDate(contextEntry.row.effective_date)}</td>
+                                                        <td className="px-2 py-1.5 align-top">
+                                                          <p className="whitespace-normal break-words font-medium text-slate-200">{contextEntry.item.description}</p>
+                                                        </td>
+                                                        <td className="px-2 py-1.5 text-right text-cyan-200">{formatRepairCost(contextEntry.item.amount)}</td>
+                                                      </tr>
+                                                    );
+                                                  })}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          ) : (
+                                            <p className="mt-2 text-[11px] text-slate-500">No additional line-item context found beyond this grouped repair incident.</p>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </Fragment>
+                                );
+                              })}
+
+                            {repairListView.hasRelevantMatches && repairListView.orderedOtherPartItems.length > 0 && (() => {
+                              const otherEntryKey = "other-repairs";
+                              const otherInvoiceCount = new Set(
+                                repairListView.orderedOtherPartItems.map((entry) => `${entry.row.id}::${entry.row.invoice_number}`)
+                              ).size;
+                              const otherTotal = repairListView.orderedOtherPartItems.reduce((sum, entry) => sum + entry.item.amount, 0);
+                              const otherLeadDate = formatIsoDate(repairListView.orderedOtherPartItems[0]?.row.effective_date ?? null);
+
+                              return (
+                                <Fragment key="other-repairs-group">
+                                  <tr className="border-t border-slate-800 bg-slate-800/40 text-slate-200">
+                                    <td className="px-1.5 py-2 md:px-2">{otherLeadDate}</td>
+                                    <td className="px-1.5 py-2 align-top md:px-2">
+                                      <p className="whitespace-normal break-words font-semibold text-slate-100">
+                                        Other repairs across {otherInvoiceCount} invoice{otherInvoiceCount === 1 ? "" : "s"}
+                                      </p>
+                                      <p className="mt-0.5 text-[10px] uppercase tracking-[0.08em] text-slate-400">
+                                        {repairListView.orderedOtherPartItems.length} additional line item{repairListView.orderedOtherPartItems.length === 1 ? "" : "s"}
+                                      </p>
+                                      <span className="mt-1 inline-flex rounded-full border border-slate-500/40 bg-slate-800/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-200">
+                                        Other
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExpandedIncidentContextByItem((prev) => ({
+                                            ...prev,
+                                            [otherEntryKey]: !prev[otherEntryKey],
+                                          }))
+                                        }
+                                        className="mt-1 rounded border border-slate-500/50 bg-slate-700/70 px-2 py-1 text-xs font-semibold text-slate-100 hover:bg-slate-700"
+                                      >
+                                        {expandedIncidentContextByItem[otherEntryKey]
+                                          ? `Hide Other Repairs (${repairListView.orderedOtherPartItems.length})`
+                                          : `Other Repairs (${repairListView.orderedOtherPartItems.length})`}
+                                      </button>
+                                    </td>
+                                    <td className="px-1.5 py-2 text-right text-slate-200 md:px-2">{formatRepairCost(otherTotal)}</td>
+                                  </tr>
+
+                                  {expandedIncidentContextByItem[otherEntryKey] && (
+                                    <tr className="border-t border-slate-800 bg-slate-900/60 text-slate-200">
+                                      <td colSpan={3} className="px-2 py-1.5">
+                                        <p className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-slate-300">Other Repairs Drilldown</p>
+                                        <div className="mt-2 overflow-x-auto rounded border border-slate-800 [scrollbar-width:thin]">
+                                          <table className="min-w-full text-left text-[11px]">
+                                            <thead className="bg-slate-900 text-slate-400">
+                                              <tr>
+                                                <th className="px-2 py-1.5 font-semibold">Date</th>
+                                                <th className="px-2 py-1.5 font-semibold">Detail</th>
+                                                <th className="px-2 py-1.5 text-right font-semibold">Cost</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {repairListView.orderedOtherPartItems.map((entry) => (
+                                                <tr key={`other-parts-row-${entry.row.id}-${entry.item.id}`} className="border-t border-slate-800 text-slate-300">
+                                                  <td className="px-2 py-1.5">{formatIsoDate(entry.row.effective_date)}</td>
+                                                  <td className="px-2 py-1.5 align-top">
+                                                    <p className="whitespace-normal break-words font-medium text-slate-200">{entry.item.description}</p>
+                                                    {entry.row.notes_text ? (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                          setRepairLineNoteModal({
+                                                            date: formatIsoDate(entry.row.effective_date),
+                                                            detail: entry.item.description,
+                                                            note: entry.row.notes_text,
+                                                          })
+                                                        }
+                                                        className="mt-1 rounded border border-slate-600 bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200 hover:bg-slate-700"
+                                                      >
+                                                        Notes
+                                                      </button>
+                                                    ) : null}
+                                                  </td>
+                                                  <td className="px-2 py-1.5 text-right text-slate-200">{formatRepairCost(entry.item.amount)}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </Fragment>
+                              );
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {repairLineNoteModal && (
+                  <div className="fixed inset-0 z-[1700] flex items-center justify-center bg-slate-950/80 px-4" role="dialog" aria-modal="true">
+                    <div className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-[0.12em] text-cyan-300">Repair Note</p>
+                          <p className="mt-1 text-xs text-slate-400">{repairLineNoteModal.date}</p>
+                          <p className="mt-1 text-sm font-semibold text-slate-100">{repairLineNoteModal.detail}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setRepairLineNoteModal(null)}
+                          className="rounded-md border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm leading-6 text-slate-200 [scrollbar-width:thin]">
+                        {repairLineNoteModal.note}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
