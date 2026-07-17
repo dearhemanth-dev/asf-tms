@@ -337,7 +337,7 @@ function MaintenanceAlertPopupContent() {
   const confidence = getConfidenceMeta(costExposureRows.length);
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-slate-950 px-3 py-3 text-slate-100 sm:px-4 sm:py-5">
+    <main className="theme-page-shell relative min-h-screen overflow-hidden bg-slate-950 px-3 py-3 text-slate-100 sm:px-4 sm:py-5">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_11%_15%,#f43f5e2c_0%,transparent_36%),radial-gradient(circle_at_85%_14%,#06b6d428_0%,transparent_34%)]" />
         <div className="absolute inset-0 bg-[linear-gradient(160deg,#020617_0%,#0b1324_42%,#111827_100%)]" />

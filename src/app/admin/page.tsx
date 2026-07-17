@@ -390,7 +390,7 @@ export default function AdminPage() {
   }
 
   return (
-    <main className="min-h-screen px-4 py-8 md:px-6 text-white">
+    <main className="theme-page-shell min-h-screen px-4 py-8 md:px-6 text-white">
       <div className="glass mx-auto max-w-6xl rounded-3xl p-6 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

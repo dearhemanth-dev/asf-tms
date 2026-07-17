@@ -404,7 +404,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
         {!immersive && (
           <>
             <div ref={desktopChipRowRef} className="mb-3 flex flex-wrap items-center gap-2 md:mb-4 md:gap-3">
-              <h2 className="mr-auto text-lg font-bold tracking-tight text-white">Live Fleet Command</h2>
+              <h2 className="fleet-list-heading mr-auto text-lg font-bold tracking-tight text-white">Live Fleet Command</h2>
               <div className="relative">
                 <button
                   onClick={() => handleChipToggle("home")}
@@ -440,7 +440,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
               </button>
             </div>
 
-            <p className="mb-3 text-xs text-slate-400">{syncLabel}</p>
+            <p className="fleet-list-sync-label mb-3 text-xs text-slate-400">{syncLabel}</p>
           </>
         )}
 
@@ -491,7 +491,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
               <div className="absolute right-2 top-2 z-30">
                 <button
                   onClick={() => void fetchVehicles()}
-                  className="rounded-md border border-cyan-400/70 bg-slate-950/70 px-2.5 py-1.5 text-xs font-semibold text-cyan-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm"
+                  className="fleet-map-refresh rounded-md border border-cyan-400/70 bg-slate-950/70 px-2.5 py-1.5 text-xs font-semibold text-cyan-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm"
                 >
                   {refreshing ? "Refreshing..." : "Refresh"}
                 </button>
@@ -504,7 +504,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
               <div className="relative">
                 <button
                   onClick={() => handleChipToggle("home")}
-                  className={`pointer-events-auto rounded-full border px-3 py-1.5 text-xs font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm ${
+                  className={`fleet-list-chip pointer-events-auto rounded-full border px-3 py-1.5 text-xs font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm ${
                     openChipMenu === "home"
                       ? "border-amber-200 bg-amber-700/85 text-amber-50"
                       : "border-amber-300/80 bg-amber-900/65 text-amber-50"
@@ -517,7 +517,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
               <div className="relative">
                 <button
                   onClick={() => handleChipToggle("hauling")}
-                  className={`pointer-events-auto rounded-full border px-3 py-1.5 text-xs font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm ${
+                  className={`fleet-list-chip pointer-events-auto rounded-full border px-3 py-1.5 text-xs font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm ${
                     openChipMenu === "hauling"
                       ? "border-emerald-200 bg-emerald-700/85 text-emerald-50"
                       : "border-emerald-300/80 bg-emerald-900/70 text-emerald-50"
@@ -530,7 +530,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
               <div className="relative">
                 <button
                   onClick={() => handleChipToggle("alert")}
-                  className={`pointer-events-auto rounded-full border px-3 py-1.5 text-xs font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm ${
+                  className={`fleet-list-chip pointer-events-auto rounded-full border px-3 py-1.5 text-xs font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm ${
                     openChipMenu === "alert"
                       ? "border-rose-200 bg-rose-700/85 text-rose-50"
                       : "border-rose-300/80 bg-rose-900/65 text-rose-50"
@@ -542,7 +542,7 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
               </div>
               <button
                 onClick={() => void fetchVehicles()}
-                className="ml-auto rounded-md border border-cyan-400/70 bg-slate-950/70 px-2.5 py-1.5 text-xs font-semibold text-cyan-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm"
+                className="fleet-list-refresh ml-auto rounded-md border border-cyan-400/70 bg-slate-950/70 px-2.5 py-1.5 text-xs font-semibold text-cyan-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-sm"
               >
                 {refreshing ? "Refreshing..." : "Refresh"}
               </button>
@@ -575,15 +575,15 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
             />
           ) : (
             <div
-              className={`overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/60 ${
+              className={`fleet-list-shell overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/60 ${
                 immersive ? "h-full min-h-0" : "h-[78dvh] min-h-[520px] max-h-[860px]"
               }`}
             >
               <div className="h-full overflow-y-auto">
                 {sortedVisibleVehicles.length === 0 ? (
-                  <div className="grid h-full place-items-center px-4 text-sm text-slate-300">No vehicles found for this view.</div>
+                  <div className="fleet-list-empty grid h-full place-items-center px-4 text-sm text-slate-300">No vehicles found for this view.</div>
                 ) : (
-                  <ul className="divide-y divide-slate-800">
+                  <ul className="fleet-list-items divide-y divide-slate-800">
                     {sortedVisibleVehicles.map((vehicle) => {
                       const statusTone =
                         vehicle.status === "alert"
@@ -595,15 +595,15 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
                       const showProminentMph = !vehicle.atHome && vehicle.status === "moving" && hasMph;
 
                       return (
-                        <li key={vehicle.id} className="px-3 py-2 sm:px-4 sm:py-2.5">
+                        <li key={vehicle.id} className="fleet-list-item px-3 py-2 sm:px-4 sm:py-2.5">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-bold text-white">{vehicle.truckNo}</p>
-                              <p className="truncate text-xs text-slate-300">{vehicle.driver || "Unassigned driver"}</p>
+                              <p className="fleet-list-truck truncate text-sm font-bold text-white">{vehicle.truckNo}</p>
+                              <p className="fleet-list-driver truncate text-xs text-slate-300">{vehicle.driver || "Unassigned driver"}</p>
                             </div>
                             <div className="flex items-center gap-1">
                               <span
-                                className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                className={`fleet-list-primary-badge inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                                   vehicle.atHome
                                     ? "border-amber-600/70 bg-amber-900/35 text-amber-100"
                                     : "border-emerald-600/70 bg-emerald-900/30 text-emerald-100"
@@ -612,25 +612,25 @@ export default function FleetViewClient({ role, immersive = false, viewMode = "m
                                 {vehicle.atHome ? "Home" : "Hauling"}
                               </span>
                               {showProminentMph ? (
-                                <span className="inline-flex shrink-0 rounded-full border border-cyan-500/70 bg-cyan-900/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-cyan-100">
+                                <span className="fleet-list-speed-badge inline-flex shrink-0 rounded-full border border-cyan-500/70 bg-cyan-900/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-cyan-100">
                                   {Math.round(vehicle.mph ?? 0)} MPH
                                 </span>
                               ) : (
-                                <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusTone}`}>
+                                <span className={`fleet-list-status-badge inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusTone}`}>
                                   {vehicle.status}
                                 </span>
                               )}
                             </div>
                           </div>
-                          <p className="mt-0.5 truncate text-xs text-slate-400">{vehicle.location || "Location unavailable"}</p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+                          <p className="fleet-list-location mt-0.5 truncate text-xs text-slate-400">{vehicle.location || "Location unavailable"}</p>
+                          <div className="fleet-list-meta mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
                             {vehicle.status !== "idle" && hasMph && !showProminentMph && (
-                              <span className="rounded-full border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-slate-200">
+                              <span className="fleet-list-meta-chip rounded-full border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-slate-200">
                                 {(vehicle.mph ?? 0).toFixed(0)} mph
                               </span>
                             )}
                             {typeof vehicle.fuelLevel === "number" && (
-                              <span className="rounded-full border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-slate-200">
+                              <span className="fleet-list-meta-chip rounded-full border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-slate-200">
                                 Fuel {vehicle.fuelLevel.toFixed(0)}%
                               </span>
                             )}

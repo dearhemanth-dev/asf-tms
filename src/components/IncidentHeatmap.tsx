@@ -165,7 +165,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
   if (incidentTypes.length === 0) {
     return (
-      <div className="rounded-md border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
+      <div className="incident-heatmap rounded-md border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
         No incident history available for this period.
       </div>
     );
@@ -173,7 +173,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
   return (
     <>
-      <div className="rounded-md border border-slate-700 bg-slate-950/40 p-3">
+      <div className="incident-heatmap rounded-md border border-slate-700 bg-slate-950/40 p-3">
         <p className="mb-3 text-sm font-semibold text-slate-200">
           Incident History{" "}
           <span className="font-normal text-slate-400 text-xs">({totalEvents} incidents over {windowDays} days)</span>
@@ -256,11 +256,11 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
 
       {/* Event Detail Modal */}
       {modal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-start md:items-center justify-center bg-black/60 md:bg-black/40 pt-4 md:pt-0" onClick={(e) => {
+        <div className="incident-event-modal fixed inset-0 z-50 flex items-start md:items-center justify-center bg-black/60 md:bg-black/40 pt-4 md:pt-0" onClick={(e) => {
           e.stopPropagation();
           closeEventModal();
         }}>
-          <div className="w-full mx-4 md:mx-0 md:w-96 max-h-[85vh] rounded-lg border border-slate-600 bg-slate-900 md:max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="incident-event-modal-panel w-full mx-4 md:mx-0 md:w-96 max-h-[85vh] rounded-lg border border-slate-600 bg-slate-900 md:max-w-lg flex flex-col" onClick={(e) => e.stopPropagation()}>
             {/* Sticky Header */}
             <div className="flex items-center justify-between gap-3 border-b border-slate-700 px-3 py-2 bg-slate-950">
               <div>
@@ -294,7 +294,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                 return (
                 <div
                   key={idx}
-                  className="rounded border border-slate-700/50 bg-slate-800/30 px-2.5 py-2"
+                  className="incident-event-card rounded border border-slate-700/50 bg-slate-800/30 px-2.5 py-2"
                 >
                   {/* Compact header: Time • Date • Truck [Severity] */}
                   <div className="flex items-center justify-between gap-2 mb-2">
@@ -305,7 +305,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     </p>
                     {event.details.severity && (
                       <span
-                        className={`text-[9px] font-medium px-2 py-0.5 rounded-sm flex-shrink-0 ${
+                        className={`incident-severity-chip text-[9px] font-medium px-2 py-0.5 rounded-sm flex-shrink-0 ${
                           event.details.severity === "high"
                             ? "bg-rose-900/50 text-rose-200"
                             : event.details.severity === "moderate"
@@ -361,7 +361,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                   <div className="flex gap-3 text-[10px] flex-wrap">
                     {/* Priority 1: Fuel incidents (direct cost) - combined efficiency view with color coding */}
                     {event.event_type === "low_fuel_incident" ? (
-                      <span className="text-slate-400 flex-1">
+                      <span className="incident-priority-line text-slate-400 flex-1">
                         {event.details.description && (
                           <>
                             <span className="font-medium text-cyan-300">{event.details.description}</span>
@@ -378,7 +378,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     ) : null}
                     {/* Priority 1b: Daily Fuel Consumption Tracking */}
                     {event.event_type === "fuel_consumption" ? (
-                      <span className="text-slate-400 flex-1">
+                      <span className="incident-priority-line text-slate-400 flex-1">
                         {event.details.description && (
                           <>
                             <span className="text-cyan-300">{event.details.description}</span>
@@ -410,9 +410,9 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                       return (
                         <div className="flex-1">
                           <p className="text-slate-400">
-                            <span className="font-medium text-amber-300">Fuel Waste</span> {" "}
-                            <span className="font-medium text-amber-200">{idlingGallons} gal</span>
-                            {" "} @ <span className="font-medium text-amber-200">${costImpact}</span>
+                            <span className="incident-idling-label font-medium text-amber-300">Fuel Waste</span> {" "}
+                            <span className="incident-idling-value font-medium text-amber-200">{idlingGallons} gal</span>
+                            {" "} @ <span className="incident-idling-value font-medium text-amber-200">${costImpact}</span>
                             {locationAcceptable ? (
                               <span className="text-emerald-400/70"> ✓ {locationCategory}</span>
                             ) : (
@@ -427,7 +427,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     })() : null}
                     {/* Priority 3: Safety incidents (insurance/maintenance costs) */}
                     {event.event_type === "harsh_brake_incident" || event.event_type === "harsh_accel_incident" || event.event_type === "harsh_corner_incident" ? (
-                      <span className="text-slate-400 flex-1">
+                      <span className="incident-priority-line text-slate-400 flex-1">
                         {event.details.gforce_magnitude !== undefined && (
                           <>
                             <span className="font-medium text-rose-100">
@@ -451,7 +451,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     ) : null}
                     {/* Priority 4: Speeding (compliance/liability) */}
                     {event.event_type === "speeding_incident" ? (
-                      <span className="text-slate-400 flex-1">
+                      <span className="incident-priority-line text-slate-400 flex-1">
                         {event.details.description && (
                           <>
                             <span className="font-medium text-rose-300">{event.duration_minutes} min</span> at{" "}
@@ -467,7 +467,7 @@ export function IncidentHeatmap({ cells, totalEvents, windowDays }: IncidentHeat
                     ) : null}
                     {/* Priority 5: Other incidents */}
                     {event.event_type !== "low_fuel_incident" && event.event_type !== "fuel_consumption" && event.event_type !== "idling_episode" && event.event_type !== "harsh_brake_incident" && event.event_type !== "harsh_accel_incident" && event.event_type !== "harsh_corner_incident" && event.event_type !== "speeding_incident" && event.details.description ? (
-                      <span className="text-slate-400 flex-1">
+                      <span className="incident-priority-line text-slate-400 flex-1">
                         {event.details.description}
                       </span>
                     ) : null}

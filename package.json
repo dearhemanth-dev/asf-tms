@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "check:theme-hooks": "node scripts/check-theme-hooks.js",
     "deploy:prod": "npx vercel --prod --yes",
     "deploy:preview": "npx vercel --yes"
   },

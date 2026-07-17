@@ -127,10 +127,11 @@ export default function FleetPage() {
           fullName={getDisplayName(demoUsername)}
           role={demoRole}
           compact
+          showThemeSelector
           viewMode={viewMode}
           onToggleViewMode={toggleViewMode}
         />
-        <main className="min-h-0 flex-1 text-white">
+        <main className="theme-page-shell min-h-0 flex-1 text-white">
           <FleetViewClient role={demoRole} immersive viewMode={viewMode} />
         </main>
       </div>
@@ -151,10 +152,11 @@ export default function FleetPage() {
         fullName={profile.full_name}
         role={profile.role}
         compact
+        showThemeSelector
         viewMode={viewMode}
         onToggleViewMode={toggleViewMode}
       />
-      <main className="min-h-0 flex-1 text-white">
+      <main className="theme-page-shell min-h-0 flex-1 text-white">
         <FleetViewClient role={profile.role} immersive viewMode={viewMode} />
       </main>
     </div>

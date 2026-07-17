@@ -452,7 +452,7 @@ export default function FaultIntelligencePage() {
   return (
     <div className="min-h-dvh bg-slate-950 text-slate-100">
       <TopNav fullName={fullName} role={role} backHref="/fleet" backLabel="Fleet" />
-      <main className="mx-auto w-full max-w-6xl p-4 sm:p-6">
+      <main className="theme-page-shell mx-auto w-full max-w-6xl p-4 sm:p-6">
         <section className="rounded-2xl border border-cyan-800/50 bg-slate-900/75 p-5 shadow-2xl">
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-cyan-300">Fault Intelligence</p>
           <h1 className="mt-2 text-2xl font-bold text-white">Persona Transform Test Harness</h1>

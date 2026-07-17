@@ -377,7 +377,7 @@ export default function FuelReportPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,_#020617_0%,_#0b1220_55%,_#111827_100%)] text-slate-50">
+    <main className="theme-light-flip theme-page-fuel-report min-h-screen bg-[linear-gradient(180deg,_#020617_0%,_#0b1220_55%,_#111827_100%)] text-slate-50">
       <div className="mx-auto flex min-h-screen w-full max-w-[1200px] flex-col gap-4 px-3 py-4 sm:px-4 lg:px-6">
         <section className="rounded-2xl border border-white/10 bg-slate-950/65 p-3 shadow-[0_18px_40px_rgba(2,6,23,0.45)] backdrop-blur-xl sm:p-4">
           <div className="flex flex-col gap-3">
@@ -556,7 +556,7 @@ export default function FuelReportPage() {
                                   <button
                                     type="button"
                                     onClick={() => toggleType(cacheKey, typeRow.type)}
-                                    className={`w-full rounded-xl border p-3 text-left transition ${
+                                    className={`fuel-type-toggle w-full rounded-xl border p-3 text-left transition ${
                                       isTypeExpanded
                                         ? "border-cyan-300/30 bg-slate-900"
                                         : "border-white/10 bg-slate-900/70 hover:bg-slate-900"
@@ -564,7 +564,7 @@ export default function FuelReportPage() {
                                   >
                                     <div className="flex items-start justify-between gap-2">
                                       <div>
-                                          <p className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${typeSkin.chip}`}>
+                                          <p className={`fuel-type-chip inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${typeSkin.chip}`}>
                                             {typeRow.type}
                                           </p>
                                         <p className="text-[11px] text-slate-300">{typeRow.transaction_count} transactions</p>

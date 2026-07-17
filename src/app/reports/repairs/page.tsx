@@ -495,7 +495,7 @@ export default function RepairsParsingPage() {
   });
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,_#020617_0%,_#0b1220_55%,_#111827_100%)] text-slate-50">
+    <main className="theme-light-flip theme-page-repairs min-h-screen bg-[linear-gradient(180deg,_#020617_0%,_#0b1220_55%,_#111827_100%)] text-slate-50">
       <div className="mx-auto flex w-full max-w-[1320px] flex-col gap-4 px-3 py-4 sm:px-5 lg:px-8">
         {showUploadWorkflow && (
         <section className="rounded-2xl border border-white/10 bg-slate-950/70 p-4 shadow-[0_20px_40px_rgba(2,6,23,0.45)] backdrop-blur-xl">
@@ -555,7 +555,7 @@ export default function RepairsParsingPage() {
               Back
             </button>
             <div>
-              <h2 className="mt-1 text-base font-semibold text-white sm:text-lg">Repairs Expense Report</h2>
+              <h2 className="repairs-report-title mt-1 text-base font-semibold text-white sm:text-lg">Repairs Expense Report</h2>
               <p className="mt-1 text-sm font-semibold text-emerald-200">
                 Total Repairs Expense: {money(totalRepairsExpense)}
               </p>
@@ -655,7 +655,7 @@ export default function RepairsParsingPage() {
               const assetTypeLabel = row.assetType ? row.assetType.charAt(0).toUpperCase() + row.assetType.slice(1) : "Asset";
 
               return (
-                <article key={row.unit_number} className="rounded-xl border border-cyan-400/15 bg-slate-900/45 p-3 shadow-[0_10px_30px_rgba(2,6,23,0.25)]">
+                <article key={row.unit_number} className="repairs-unit-card rounded-xl border border-cyan-400/15 bg-slate-900/45 p-3 shadow-[0_10px_30px_rgba(2,6,23,0.25)]">
                   <button
                     type="button"
                     onClick={() => void loadAssetDetail(row.unit_number)}
@@ -667,7 +667,7 @@ export default function RepairsParsingPage() {
                   >
                     <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-cyan-50">#{rankingNumber} {assetTypeLabel} {row.unit_number}</p>
+                          <p className="repairs-unit-title text-sm font-semibold text-cyan-50">#{rankingNumber} {assetTypeLabel} {row.unit_number}</p>
                           <p className="mt-1 text-xs text-slate-400">
                             {row.row_count} invoice{row.row_count === 1 ? "" : "s"} {row.earliestInvoiceDate && `· First: ${row.earliestInvoiceDate}`}
                           </p>
@@ -695,11 +695,11 @@ export default function RepairsParsingPage() {
                       {selectedAssetRows.map((invoice) => {
                         const invoiceLineItemTotal = invoice.line_items.reduce((sum, item) => sum + asNumber(item.amount), 0);
                         return (
-                          <details key={invoice.id} className="rounded-xl border border-amber-400/20 bg-slate-950/70 p-3 shadow-[0_8px_20px_rgba(2,6,23,0.22)]">
+                          <details key={invoice.id} className="repairs-invoice-card rounded-xl border border-amber-400/20 bg-slate-950/70 p-3 shadow-[0_8px_20px_rgba(2,6,23,0.22)]">
                             <summary className="cursor-pointer list-none">
                               <div className="flex items-start justify-between gap-3">
                                 <div>
-                                  <p className="text-sm font-semibold text-amber-50">Invoice {invoice.invoice_number}</p>
+                                  <p className="repairs-invoice-title text-sm font-semibold text-amber-50">Invoice {invoice.invoice_number}</p>
                                   <p className="mt-1 text-xs text-slate-400">{invoice.vendor_name ?? "Unknown vendor"}</p>
                                   <div className="mt-2 grid grid-cols-1 gap-1 text-[11px] text-slate-400 sm:grid-cols-2">
                                     <p>Invoice Date: <span className="text-slate-200">{invoice.invoice_date ?? "-"}</span></p>
@@ -711,7 +711,7 @@ export default function RepairsParsingPage() {
                                 </div>
                                 <div className="text-right">
                                   <p className="text-base font-semibold text-emerald-200">{money(invoice.total_amount)}</p>
-                                  <p className="mt-1 text-[11px] text-amber-200">Discount: {moneyOrDash(invoice.discount_amount)}</p>
+                                  <p className="repairs-discount text-[11px] text-amber-200">Discount: {moneyOrDash(invoice.discount_amount)}</p>
                                   <p className="mt-1 text-[11px] text-slate-400">{invoice.line_items.length} line items</p>
                                 </div>
                               </div>
@@ -744,9 +744,9 @@ export default function RepairsParsingPage() {
                               </div>
 
                               {invoice.notes_text && invoice.notes_text.trim() && (
-                                <div className="mt-3 rounded-lg border border-violet-400/12 bg-slate-950/55 p-2.5">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-violet-200">Notes</p>
-                                  <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">{invoice.notes_text}</p>
+                                <div className="repairs-notes-box mt-3 rounded-lg border border-violet-400/12 bg-slate-950/55 p-2.5">
+                                  <p className="repairs-notes-title text-[10px] font-semibold uppercase tracking-[0.1em] text-violet-200">Notes</p>
+                                  <p className="repairs-notes-body mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">{invoice.notes_text}</p>
                                 </div>
                               )}
                             </div>

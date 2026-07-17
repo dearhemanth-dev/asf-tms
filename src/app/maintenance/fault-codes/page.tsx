@@ -1256,7 +1256,7 @@ function deriveAlertLevel(row: Record<string, unknown>): AlertLevel | null {
       rank: 3,
       label: "RED ALERT",
       action: "Pull Over / Stop Truck immediately.",
-      className: "border-rose-400/40 bg-rose-500/10 text-rose-200",
+      className: "fault-alert-red",
     };
   }
 
@@ -1265,7 +1265,7 @@ function deriveAlertLevel(row: Record<string, unknown>): AlertLevel | null {
       rank: 2,
       label: "ORANGE ALERT",
       action: "Needs Shop Attention. Book a repair block at end of shift.",
-      className: "border-amber-400/40 bg-amber-500/10 text-amber-200",
+      className: "fault-alert-orange",
     };
   }
 
@@ -1274,7 +1274,7 @@ function deriveAlertLevel(row: Record<string, unknown>): AlertLevel | null {
       rank: 1,
       label: "YELLOW ALERT",
       action: "Non-Urgent Diagnostic Required.",
-      className: "border-yellow-400/40 bg-yellow-500/10 text-yellow-200",
+      className: "fault-alert-yellow",
     };
   }
 
@@ -1466,7 +1466,7 @@ function getTopAlertLevel(faults: FaultDetail[], engineState: string): AlertLeve
       action: isStoppedState
         ? `${enginePowerText} Keep truck out of service and call shop dispatch now.`
         : `${enginePowerText} Pull over safely and stop truck immediately.`,
-      className: "border-rose-400/40 bg-rose-500/10 text-rose-200",
+      className: "fault-alert-red",
     };
   }
 
@@ -1478,7 +1478,7 @@ function getTopAlertLevel(faults: FaultDetail[], engineState: string): AlertLeve
       action: isStoppedState
         ? `${enginePowerText} Send this unit for shop attention before next dispatch.`
         : `${enginePowerText} Needs shop attention; book repair at end of shift.`,
-      className: "border-amber-400/40 bg-amber-500/10 text-amber-200",
+      className: "fault-alert-orange",
     };
   }
 
@@ -1488,7 +1488,7 @@ function getTopAlertLevel(faults: FaultDetail[], engineState: string): AlertLeve
       rank: 1,
       label: "YELLOW ALERT",
       action: `${enginePowerText} Non-urgent diagnostic required at next maintenance window.`,
-      className: "border-yellow-400/40 bg-yellow-500/10 text-yellow-200",
+      className: "fault-alert-yellow",
     };
   }
 
@@ -3912,49 +3912,51 @@ export default function MaintenanceFaultCodesPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-white">
+    <div className="fault-theme-scope flex min-h-screen flex-col bg-[var(--fault-bg)] text-[var(--fault-text)] transition-colors">
       <TopNav fullName={effectiveName} role={effectiveRole} compact showMenu={false} backHref="/fleet" backLabel="Back" />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5 md:px-6">
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/55 p-4 md:p-5">
+        <section className="rounded-2xl border border-[var(--fault-border)] bg-[var(--fault-surface)]/85 p-4 md:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">Maintenance</p>
-              <h1 className="mt-1 text-2xl font-black text-slate-100">Fault Codes</h1>
-              <p className="mt-1 text-sm text-slate-300">Live vehicle fault-code feed from the connected fleet provider.</p>
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="text-xs uppercase tracking-[0.18em] text-[var(--fault-accent)]">Maintenance</p>
+              <h1 className="mt-1 text-2xl font-black text-[var(--fault-text)]">Fault Codes</h1>
+              <p className="mt-1 text-sm text-[var(--fault-text-muted)]">Live vehicle fault-code feed from the connected fleet provider.</p>
+              <p className="mt-1 text-xs text-[var(--fault-text-muted)]">
                 {canUsePushTestControls
                   ? "Push testing users can run a single workflow action for quick validation."
                   : "Enable push notifications on this phone to receive maintenance alerts in real time."}
               </p>
             </div>
 
-            {canUsePushTestControls && (
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void restartPushTestWorkflow()}
-                  disabled={pushLoading || refreshing || loadingData}
-                  className="rounded-md border border-cyan-400/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {pushWorkflowLoading ? "Preparing + Restarting Push..." : "Restart Push Test"}
-                </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {canUsePushTestControls && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void restartPushTestWorkflow()}
+                    disabled={pushLoading || refreshing || loadingData}
+                    className="rounded-md border border-cyan-400/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {pushWorkflowLoading ? "Preparing + Restarting Push..." : "Restart Push Test"}
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => void loadFaultCodes(true)}
-                  disabled={refreshing || loadingData || pushLoading}
-                  className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {refreshing ? "Refreshing..." : "Refresh"}
-                </button>
-              </div>
-            )}
+                  <button
+                    type="button"
+                    onClick={() => void loadFaultCodes(true)}
+                    disabled={refreshing || loadingData || pushLoading}
+                    className="rounded-md border border-cyan-500/45 bg-cyan-700/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-700/35 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {refreshing ? "Refreshing..." : "Refresh"}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3">
-            <article className="rounded-lg border border-slate-700 bg-slate-950/60 p-3">
-              <p className="text-xs uppercase tracking-wide text-slate-400">Total Fault Records</p>
+            <article className="rounded-lg border border-[var(--fault-border)] bg-[var(--fault-surface-2)]/75 p-3">
+              <p className="text-xs uppercase tracking-wide text-[var(--fault-text-muted)]">Total Fault Records</p>
               <p className="mt-1 text-2xl font-extrabold text-amber-200">{totalFaults}</p>
             </article>
 
@@ -4436,16 +4438,16 @@ export default function MaintenanceFaultCodesPage() {
                   ref={(element) => {
                     vehicleCardRefs.current[vehicle.vehicleKey] = element;
                   }}
-                  className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 md:p-4"
+                  className="rounded-xl border border-[var(--fault-border)] bg-[var(--fault-surface)]/85 p-3 md:p-4"
                   style={{ scrollMarginTop: "96px" }}
                 >
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h2 className="text-base font-bold text-slate-100">{vehicle.vehicleLabel}</h2>
-                      <p className="text-xs text-slate-400" suppressHydrationWarning>
+                      <h2 className="text-base font-bold text-[var(--fault-text)]">{vehicle.vehicleLabel}</h2>
+                      <p className="text-xs text-[var(--fault-text-muted)]" suppressHydrationWarning>
                         Last Seen: {vehicle.lastSeen}
                       </p>
-                      <p className="text-xs text-slate-400 break-words">Location: {vehicle.lastSeenLocation}</p>
+                      <p className="text-xs text-[var(--fault-text-muted)] break-words">Location: {vehicle.lastSeenLocation}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex w-fit rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-xs font-semibold text-cyan-200">
@@ -4494,7 +4496,7 @@ export default function MaintenanceFaultCodesPage() {
                     }
                     className={`mt-3 w-full rounded-xl border px-3 py-3 text-left transition ${
                       hasFaults
-                        ? vehicle.alertLevel?.className ?? "border-amber-400/40 bg-amber-500/10 text-amber-100"
+                        ? vehicle.alertLevel?.className ?? "fault-alert-neutral"
                         : "border-emerald-400/35 bg-emerald-500/10 text-emerald-100"
                     }`}
                   >
@@ -4571,10 +4573,14 @@ export default function MaintenanceFaultCodesPage() {
                             }}
                           >
                         <div
-                          className={`rounded-xl border bg-slate-900/84 p-3 backdrop-blur-sm shadow-[0_18px_40px_-24px_rgba(8,145,178,0.75)] ${
-                            isActiveCard ? "border-cyan-300/70 ring-1 ring-cyan-300/45" : "border-cyan-500/35"
+                          className={`rounded-xl border p-3 backdrop-blur-sm transition-shadow duration-500 ${
+                            isActiveCard ? "ring-1" : ""
                           }`}
                           style={{
+                            backgroundColor: "var(--fault-float-bg)",
+                            borderColor: isActiveCard ? "var(--fault-float-border-active)" : "var(--fault-float-border)",
+                            boxShadow: isActiveCard ? "var(--fault-float-shadow-active)" : "var(--fault-float-shadow-rest)",
+                            borderWidth: isActiveCard ? "1.5px" : "1px",
                             height: isCollapsedCard ? `${collapsedHeaderPx}px` : "auto",
                             overflowY: isCollapsedCard ? "hidden" : "visible",
                           }}
@@ -4591,21 +4597,21 @@ export default function MaintenanceFaultCodesPage() {
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className="text-base font-bold leading-snug text-cyan-50 break-words">{effectiveCard.title}</p>
-                              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200" suppressHydrationWarning>
+                              <p className="text-base font-bold leading-snug break-words text-[var(--fault-float-title)]">{effectiveCard.title}</p>
+                              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--fault-float-meta)]" suppressHydrationWarning>
                                 {formatTime(effectiveCard.timestamp, dateTimeDisplay ?? undefined)}
                               </p>
-                              <p className="mt-1 truncate text-[11px] text-slate-300">
+                              <p className="mt-1 truncate text-[11px] text-[var(--fault-float-subtle)]">
                                 {effectiveCard.source} • {effectiveCard.occurrenceCount} occurrence{effectiveCard.occurrenceCount !== 1 ? "s" : ""}
                               </p>
                             </div>
                             <span
                               className={`flex-shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] whitespace-nowrap ${
                                 effectiveCard.urgency === "Immediate"
-                                  ? "bg-rose-600/70 text-rose-50"
+                                  ? "fault-urgency-immediate"
                                   : effectiveCard.urgency === "High"
-                                    ? "bg-amber-600/70 text-amber-50"
-                                    : "bg-emerald-600/70 text-emerald-50"
+                                    ? "fault-urgency-high"
+                                    : "fault-urgency-planned"
                               }`}
                             >
                               {effectiveCard.urgency}
@@ -4613,7 +4619,7 @@ export default function MaintenanceFaultCodesPage() {
                           </div>
 
                           {isCollapsedCard ? (
-                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                            <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--fault-float-subtle)]">
                               <span>Tap to focus</span>
                               <span>{idx === activeCardIndex ? "Focused" : "Next card"}</span>
                             </div>
@@ -4621,8 +4627,8 @@ export default function MaintenanceFaultCodesPage() {
                             <div className="pb-8">
                               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                                 <div>
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Technician Guidance</p>
-                                  <ul className="mt-1 space-y-1 text-xs text-slate-100">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--fault-float-subtle)]">Technician Guidance</p>
+                                  <ul className="mt-1 space-y-1 text-xs text-[var(--fault-float-body)]">
                                     {technicianBullets.map((bullet, i) => (
                                       <li key={i} className="flex gap-2">
                                         <span className="text-cyan-400 flex-shrink-0">•</span>
@@ -4632,8 +4638,8 @@ export default function MaintenanceFaultCodesPage() {
                                   </ul>
                                 </div>
                                 <div>
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Operations Guidance</p>
-                                  <ul className="mt-1 space-y-1 text-xs text-slate-100">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--fault-float-subtle)]">Operations Guidance</p>
+                                  <ul className="mt-1 space-y-1 text-xs text-[var(--fault-float-body)]">
                                     {operationsBullets.map((bullet, i) => (
                                       <li key={i} className="flex gap-2">
                                         <span className="text-amber-400 flex-shrink-0">•</span>
@@ -4646,7 +4652,7 @@ export default function MaintenanceFaultCodesPage() {
 
                               <div className="mt-3">
                                 <div className="flex items-center justify-between">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--fault-float-subtle)]">
                                     Estimate ({estimateQualifier})
                                   </p>
                                   <div className="flex items-center gap-2">
@@ -4672,7 +4678,7 @@ export default function MaintenanceFaultCodesPage() {
                                     </button>
                                   </div>
                                 </div>
-                                <ul className="mt-1 space-y-1 text-xs text-slate-100">
+                                <ul className="mt-1 space-y-1 text-xs text-[var(--fault-float-body)]">
                                   <li className="flex gap-2">
                                     <span className="text-cyan-400 flex-shrink-0">•</span>
                                     <span>Labor: {effectiveCard.laborHours}</span>
@@ -4683,13 +4689,13 @@ export default function MaintenanceFaultCodesPage() {
                                   </li>
                                 </ul>
                                 {partEstimateLines.length > 0 && (
-                                  <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/50 px-2 py-2">
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">Likely Parts Breakdown</p>
-                                    <ul className="mt-1 space-y-1 text-xs text-slate-200">
+                                  <div className="mt-2 rounded-lg border border-[var(--fault-border)] bg-[var(--fault-surface-2)]/70 px-2 py-2">
+                                    <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--fault-float-subtle)]">Likely Parts Breakdown</p>
+                                    <ul className="mt-1 space-y-1 text-xs text-[var(--fault-float-body)]">
                                       {partEstimateLines.map((line, lineIndex) => (
                                         <li key={`${vehicle.vehicleKey}-part-line-${idx}-${lineIndex}`} className="flex items-start justify-between gap-3">
-                                          <span className="text-slate-100">{line.part}</span>
-                                          <span className="whitespace-nowrap text-cyan-200">{line.range}</span>
+                                          <span className="text-[var(--fault-float-body)]">{line.part}</span>
+                                          <span className="whitespace-nowrap text-[var(--fault-float-meta)]">{line.range}</span>
                                         </li>
                                       ))}
                                     </ul>
@@ -4794,13 +4800,13 @@ export default function MaintenanceFaultCodesPage() {
           )}
 
           {repairListModal && (
-            <div className="fixed inset-0 z-[1600] flex items-start justify-center overflow-y-auto bg-slate-950/85 px-4 py-6" role="dialog" aria-modal="true">
-              <div className="w-full max-w-5xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+            <div className="fixed inset-0 z-[1600] flex items-start justify-center overflow-y-auto bg-[var(--fault-bg)]/85 px-4 py-6" role="dialog" aria-modal="true">
+              <div className="w-full max-w-5xl rounded-2xl border border-[var(--fault-border)] bg-[var(--fault-surface)] p-4 shadow-2xl">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.14em] text-emerald-300">Repairs {repairListModal.windowDays} Days</p>
-                    <h3 className="text-lg font-bold text-slate-100">{repairListModal.vehicle.vehicleLabel}</h3>
-                    <p className="mt-1 text-xs text-slate-400">Unit: {repairListModal.resolvedUnit} • VIN: {repairListModal.resolvedVin}</p>
+                    <h3 className="text-lg font-bold text-[var(--fault-text)]">{repairListModal.vehicle.vehicleLabel}</h3>
+                    <p className="mt-1 text-xs text-[var(--fault-text-muted)]">Unit: {repairListModal.resolvedUnit} • VIN: {repairListModal.resolvedVin}</p>
                     <p className="mt-1 text-xs text-cyan-100/90">
                       Active faults: {repairListModal.vehicle.faultCount}
                       {repairModalFaultCodes.length > 0 ? `: ${repairModalFaultCodes.join(", ")}` : ""}
@@ -4813,7 +4819,7 @@ export default function MaintenanceFaultCodesPage() {
                       setExpandedIncidentContextByItem({});
                       setRepairLineNoteModal(null);
                     }}
-                    className="rounded-md border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                    className="rounded-md border border-[var(--fault-border)] bg-[var(--fault-surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fault-text)] hover:brightness-110"
                   >
                     Close
                   </button>
@@ -4834,7 +4840,7 @@ export default function MaintenanceFaultCodesPage() {
                     No repairs found in the selected {repairListModal.windowDays}-day window.
                   </div>
                 ) : (
-                  <section className="mt-4 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
+                  <section className="mt-4 rounded-xl border border-[var(--fault-border)] bg-[var(--fault-surface-2)]/75 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <h4 className="text-sm font-semibold text-slate-100">Fault-Relevant Parts in {repairListModal.windowDays} Days Window</h4>
                       <label className="flex items-center gap-2 text-xs text-slate-300">
@@ -4969,10 +4975,10 @@ export default function MaintenanceFaultCodesPage() {
                                     </tr>
 
                                     {expandedIncidentContextByItem[entryKey] && (
-                                      <tr className="border-t border-slate-800 bg-slate-900/60 text-slate-200">
+                                      <tr className="border-t border-cyan-900/40 bg-cyan-900/20 text-slate-200">
                                         <td colSpan={3} className="px-2 py-1.5">
                                           <p className="mb-1 text-xs font-semibold uppercase tracking-[0.08em] text-cyan-200">Incident Context</p>
-                                          <div className="mt-1 rounded border border-slate-800 bg-slate-950/50 p-2 text-[11px] text-slate-300">
+                                          <div className="mt-1 rounded border border-cyan-900/40 bg-cyan-950/25 p-2 text-[11px] text-slate-300">
                                             <p className="font-semibold text-slate-100">
                                               Invoice {entry.row.invoice_number} • {formatIsoDate(entry.row.effective_date)}
                                             </p>
@@ -4990,9 +4996,9 @@ export default function MaintenanceFaultCodesPage() {
                                           </div>
 
                                           {contextRows.length > 0 ? (
-                                            <div className="mt-2 overflow-x-auto rounded border border-slate-800 [scrollbar-width:thin]">
+                                            <div className="mt-2 overflow-x-auto rounded border border-cyan-900/40 bg-cyan-950/20 [scrollbar-width:thin]">
                                               <table className="min-w-full text-left text-[11px]">
-                                                <thead className="bg-slate-900 text-slate-400">
+                                                <thead className="bg-cyan-900/35 text-slate-300">
                                                   <tr>
                                                     <th className="px-2 py-1.5 font-semibold">Date</th>
                                                     <th className="px-2 py-1.5 font-semibold">Context Detail</th>
@@ -5119,23 +5125,23 @@ export default function MaintenanceFaultCodesPage() {
                 )}
 
                 {repairLineNoteModal && (
-                  <div className="fixed inset-0 z-[1700] flex items-center justify-center bg-slate-950/80 px-4" role="dialog" aria-modal="true">
-                    <div className="w-full max-w-xl rounded-xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+                      <div className="fixed inset-0 z-[1700] flex items-center justify-center bg-[var(--fault-bg)]/80 px-4" role="dialog" aria-modal="true">
+                        <div className="w-full max-w-xl rounded-xl border border-[var(--fault-border)] bg-[var(--fault-surface)] p-4 shadow-2xl">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-[11px] uppercase tracking-[0.12em] text-cyan-300">Repair Note</p>
-                          <p className="mt-1 text-xs text-slate-400">{repairLineNoteModal.date}</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-100">{repairLineNoteModal.detail}</p>
+                          <p className="mt-1 text-xs text-[var(--fault-text-muted)]">{repairLineNoteModal.date}</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--fault-text)]">{repairLineNoteModal.detail}</p>
                         </div>
                         <button
                           type="button"
                           onClick={() => setRepairLineNoteModal(null)}
-                          className="rounded-md border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                          className="rounded-md border border-[var(--fault-border)] bg-[var(--fault-surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fault-text)] hover:brightness-110"
                         >
                           Close
                         </button>
                       </div>
-                      <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm leading-6 text-slate-200 [scrollbar-width:thin]">
+                      <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-[var(--fault-border)] bg-[var(--fault-surface-2)]/70 px-3 py-2 text-sm leading-6 text-[var(--fault-text)] [scrollbar-width:thin]">
                         {repairLineNoteModal.note}
                       </div>
                     </div>
@@ -5146,8 +5152,8 @@ export default function MaintenanceFaultCodesPage() {
           )}
 
           {healthModalVehicle && (
-            <div className="fixed inset-0 z-[1600] flex items-center justify-center bg-slate-950/80 px-4" role="dialog" aria-modal="true">
-              <div className="w-full max-w-3xl rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+            <div className="fixed inset-0 z-[1600] flex items-center justify-center bg-[var(--fault-bg)]/80 px-4" role="dialog" aria-modal="true">
+              <div className="w-full max-w-3xl rounded-2xl border border-[var(--fault-border)] bg-[var(--fault-surface)] p-4 shadow-2xl">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-300">Health Snapshot</p>
@@ -5156,7 +5162,7 @@ export default function MaintenanceFaultCodesPage() {
                   <button
                     type="button"
                     onClick={() => setHealthModalVehicle(null)}
-                    className="rounded-md border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                    className="rounded-md border border-[var(--fault-border)] bg-[var(--fault-surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fault-text)] hover:brightness-110"
                   >
                     Close
                   </button>
@@ -5195,20 +5201,20 @@ export default function MaintenanceFaultCodesPage() {
           )}
 
           {dealerModal && (
-            <div className="fixed inset-0 z-[1600] flex items-start justify-center overflow-y-auto bg-slate-950/85 px-4 py-6" role="dialog" aria-modal="true">
-              <div className="flex w-full max-w-4xl flex-col rounded-2xl border border-slate-700 bg-slate-900 p-4 shadow-2xl">
+            <div className="fixed inset-0 z-[1600] flex items-start justify-center overflow-y-auto bg-[var(--fault-bg)]/85 px-4 py-6" role="dialog" aria-modal="true">
+              <div className="flex w-full max-w-4xl flex-col rounded-2xl border border-[var(--fault-border)] bg-[var(--fault-surface)] p-4 shadow-2xl">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-300">Parts Dealer Help</p>
-                    <h3 className="text-lg font-bold text-slate-100">{dealerModal.cardTitle}</h3>
-                    <p className="mt-1 text-xs text-slate-400">
+                    <h3 className="text-lg font-bold text-[var(--fault-text)]">{dealerModal.cardTitle}</h3>
+                    <p className="mt-1 text-xs text-[var(--fault-text-muted)]">
                       Estimate ({dealerModal.confidence}) • Range: {dealerModal.partsRange}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setDealerModal(null)}
-                    className="rounded-md border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                    className="rounded-md border border-[var(--fault-border)] bg-[var(--fault-surface-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fault-text)] hover:brightness-110"
                   >
                     Close
                   </button>

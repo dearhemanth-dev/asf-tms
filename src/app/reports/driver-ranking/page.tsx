@@ -349,20 +349,20 @@ function scoreDriverFromAnalytics(
 function tierStyles(tier: DriverScoreRow["tier"]) {
   if (tier === "top_performer") {
     return {
-      badge: "border-emerald-500/70 bg-emerald-900/30 text-emerald-200",
+      badge: "tier-badge tier-badge-top border-emerald-500/70 bg-emerald-900/30 text-emerald-200",
       card: "border-emerald-700/40",
       label: "Top 10%",
     };
   }
   if (tier === "action_needed") {
     return {
-      badge: "border-rose-500/70 bg-rose-900/35 text-rose-200",
+      badge: "tier-badge tier-badge-risk border-rose-500/70 bg-rose-900/35 text-rose-200",
       card: "border-rose-700/40",
       label: "Below Avg",
     };
   }
   return {
-    badge: "border-slate-500/70 bg-slate-800/30 text-slate-300",
+    badge: "tier-badge tier-badge-mid border-slate-500/70 bg-slate-800/30 text-slate-300",
     card: "border-slate-700/40",
     label: "Average",
   };
@@ -611,10 +611,18 @@ export default function DriverRankingPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-5 text-slate-100 md:px-6 md:py-8">
+    <main className="theme-light-flip theme-page-driver-ranking min-h-screen bg-slate-950 px-4 py-5 text-slate-100 md:px-6 md:py-8">
       <section className="mx-auto w-full max-w-5xl space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight text-cyan-100 md:text-2xl">Driver Ranking</h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => router.back()}
+              className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
+            >
+              Back
+            </button>
+            <h1 className="driver-report-title text-xl font-semibold tracking-tight text-cyan-100 md:text-2xl">Driver Ranking</h1>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setInfoOpen(true)}
@@ -628,13 +636,6 @@ export default function DriverRankingPage() {
               className="rounded-md border border-cyan-700/70 bg-cyan-950/30 px-3 py-1.5 text-xs font-medium text-cyan-100 hover:bg-cyan-900/40"
             >
               {refreshing ? "Refreshing..." : "Refresh"}
-            </button>
-
-            <button
-              onClick={() => router.back()}
-              className="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800"
-            >
-              ← Back
             </button>
           </div>
         </div>
@@ -651,12 +652,12 @@ export default function DriverRankingPage() {
             </div>
             <div className="hidden border-r border-slate-700/50 sm:block" style={{ height: "40px" }} />
             <div className="flex flex-col">
-              <p className="text-[11px] uppercase tracking-wide text-emerald-300/80">Top 10%</p>
+              <p className="driver-kpi-label-top text-[11px] uppercase tracking-wide text-emerald-300/80">Top 10%</p>
               <p className="text-2xl font-semibold text-emerald-200">{summary.topPerformers}</p>
             </div>
             <div className="hidden border-r border-slate-700/50 sm:block" style={{ height: "40px" }} />
             <div className="flex flex-col">
-              <p className="text-[11px] uppercase tracking-wide text-rose-300/80">Below Average</p>
+              <p className="driver-kpi-label-risk text-[11px] uppercase tracking-wide text-rose-300/80">Below Average</p>
               <p className="text-2xl font-semibold text-rose-200">{summary.actionNeeded}</p>
             </div>
 
@@ -757,10 +758,10 @@ export default function DriverRankingPage() {
       </section>
 
       {infoOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/75 p-2 backdrop-blur-sm md:items-center md:justify-center md:p-3">
-          <div className="flex max-h-[90vh] w-full max-w-xs flex-col rounded-2xl border border-slate-700 bg-slate-900 md:max-w-2xl">
+        <div className="driver-help-modal fixed inset-0 z-50 flex items-end bg-slate-950/75 p-2 backdrop-blur-sm md:items-center md:justify-center md:p-3">
+          <div className="driver-help-modal-panel flex max-h-[90vh] w-full max-w-xs flex-col rounded-2xl border border-slate-700 bg-slate-900 md:max-w-2xl">
             <div className="sticky top-0 flex shrink-0 items-center justify-between border-b border-slate-700 bg-slate-900 p-3 md:p-4">
-              <h2 className="text-sm font-semibold text-cyan-100 md:text-base">DPI Methodology</h2>
+              <h2 className="driver-help-title text-sm font-semibold text-cyan-100 md:text-base">DPI Methodology</h2>
               <button
                 onClick={() => setInfoOpen(false)}
                 className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
@@ -773,7 +774,7 @@ export default function DriverRankingPage() {
                 DPI is a weighted composite score to help owner-level reward and disciplinary decisions. The score is
                 normalized to 0-100 and combines five operational pillars.
               </p>
-              <p className="mt-2 rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 text-[11px] font-medium text-cyan-100 md:text-sm">
+              <p className="driver-help-formula mt-2 rounded-md border border-slate-700 bg-slate-950/80 px-3 py-2 text-[11px] font-medium text-cyan-100 md:text-sm">
                 {weightedFormula}
               </p>
               <ul className="mt-3 space-y-2 text-sm text-slate-300">
@@ -785,10 +786,10 @@ export default function DriverRankingPage() {
               </ul>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {PILLARS.map((pillar) => (
-                  <article key={pillar.key} className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
+                  <article key={pillar.key} className="driver-help-pillar rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-xs font-semibold text-slate-100">{pillar.title}</h3>
-                      <span className="rounded-full border border-cyan-800/60 bg-cyan-900/30 px-2 py-0.5 text-[10px] text-cyan-200">
+                      <h3 className="driver-help-pillar-title text-xs font-semibold text-slate-100">{pillar.title}</h3>
+                      <span className="driver-help-pillar-chip rounded-full border border-cyan-800/60 bg-cyan-900/30 px-2 py-0.5 text-[10px] text-cyan-200">
                         {pillar.weight}%
                       </span>
                     </div>

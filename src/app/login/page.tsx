@@ -145,7 +145,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-8 text-white">
+    <main className="theme-light-flip theme-page-login relative min-h-screen overflow-hidden px-4 py-8 text-white">
       <div className="pointer-events-none absolute inset-0">
         <div
           className="absolute inset-0 bg-cover"

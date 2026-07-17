@@ -431,7 +431,7 @@ export default function FuelExpensesImportPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,_#020617_0%,_#0b1220_55%,_#111827_100%)] text-slate-50">
+    <main className="theme-page-shell min-h-screen bg-[linear-gradient(180deg,_#020617_0%,_#0b1220_55%,_#111827_100%)] text-slate-50">
       <div className="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col gap-4 px-3 py-4 sm:px-4 lg:px-6">
 
         {/* Header */}
